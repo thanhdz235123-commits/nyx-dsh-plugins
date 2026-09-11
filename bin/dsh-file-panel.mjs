@@ -141,18 +141,55 @@ function ensurePatchEntry(patchFile) {
 function removePatchEntry(patchFile) {
   if (existsSync(patchFile) !== true) return { changed: false, state: 'absent' }
   const before = readFileSync(patchFile, 'utf8')
-  if (before.includes(MARK_START) !== true) {
-    if (patchState(before) === 'absent') return { changed: false, state: 'absent' }
-    return { changed: false, state: 'unmarked' }
+  let next = null
+  let state = 'removed'
+
+  if (before.includes(MARK_START) === true) {
+    const start = before.indexOf(MARK_START)
+    const endIndex = before.indexOf(MARK_END, start)
+    const end = endIndex === -1 ? before.length : endIndex + MARK_END.length
+    next = `${before.slice(0, start)}${before.slice(end)}`
+  } else if (patchState(before) === 'manual') {
+    // A row someone wrote by hand. Removed only when the block is exactly this
+    // plugin's insert — a block that also configures something else is left
+    // alone and reported.
+    const lines = before.split('\n')
+    const kept = []
+    let index = 0
+    let removed = false
+    while (index < lines.length) {
+      const line = lines[index]
+      if (/^\s*-\s*insert:\s*$/.test(line)) {
+        const indent = line.search(/\S/)
+        let stop = index + 1
+        while (stop < lines.length && (lines[stop].trim() === '' || lines[stop].search(/\S/) > indent)) stop += 1
+        const block = lines.slice(index, stop).join('\n')
+        const ids = [...block.matchAll(/-\s*id:\s*([^\s#]+)/g)].map((match) => match[1])
+        if (ids.length === 1 && ids[0] === PACKAGE) {
+          while (kept.length > 0 && kept[kept.length - 1].trim().startsWith('#') && kept[kept.length - 1].includes(PACKAGE)) kept.pop()
+          index = stop
+          removed = true
+          continue
+        }
+      }
+      kept.push(line)
+      index += 1
+    }
+    if (removed === true) next = kept.join('\n')
+    else state = 'unmarked'
+  } else {
+    return { changed: false, state: 'absent' }
   }
-  const start = before.indexOf(MARK_START)
-  const endIndex = before.indexOf(MARK_END, start)
-  const end = endIndex === -1 ? before.length : endIndex + MARK_END.length
-  let next = `${before.slice(0, start)}${before.slice(end)}`.replace(/\n{3,}/g, '\n\n').replace(/[ \t]+\n/g, '\n')
-  // An empty patch layer has to stay valid YAML.
-  if (patchPayload(next) === '') next = '[]\n'
+
+  if (next === null) return { changed: false, state }
+  next = next.replace(/\n{3,}/g, '\n\n').replace(/[ \t]+\n/g, '\n')
+  // An emptied patch layer has to stay valid YAML — and keeps its comments.
+  if (patchPayload(next) === '') {
+    const comments = next.split('\n').filter((line) => line.trim().startsWith('#'))
+    next = comments.length === 0 ? '[]\n' : `${comments.join('\n')}\n\n[]\n`
+  }
   writeFileSync(patchFile, next)
-  return { changed: true, state: 'removed' }
+  return { changed: true, state }
 }
 
 // ---------------------------------------------------------------------------
