@@ -1,0 +1,66 @@
+{
+  "name": "dsh-file-panel",
+  "version": "0.3.4",
+  "description": "Antigravity-style in-app file panel for DeepSeek Harness: file links open a right-side preview / diff / editor column instead of the OS default app.",
+  "type": "module",
+  "main": "./index.js",
+  "bin": {
+    "dsh-file-panel": "./bin/dsh-file-panel.mjs"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thanhdz235123-commits/dsh-file-panel.git"
+  },
+  "homepage": "https://github.com/thanhdz235123-commits/dsh-file-panel#readme",
+  "bugs": {
+    "url": "https://github.com/thanhdz235123-commits/dsh-file-panel/issues"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "dsh-plugin",
+    "file-panel",
+    "diff",
+    "viewer"
+  ],
+  "author": "dsh-file-panel contributors",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-primitives",
+        "@deepseek-ai/dsh-client-ui-slots"
+      ],
+      "immediately": true,
+      "platform": "web"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-client-ui-primitives": "^0.1.2-rc.1",
+    "@deepseek-ai/dsh-client-ui-slots": "^0.1.2-rc.1"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "bin/",
+    "README.md",
+    "README.vn.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "verify": "node tools/verify.mjs"
+  }
+}

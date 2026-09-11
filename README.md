@@ -1,0 +1,198 @@
+# dsh-file-panel
+
+Antigravity-style in-app file panel for **DSH Desktop / DeepSeek Harness**.
+
+Clicking a workspace path in the chat no longer hands the file to the OS default
+app: the click opens a **right-side panel** in the harness window — preview with
+syntax highlighting, the session's own edit diff, a workspace tree, and an
+in-place editor with a stale-guarded save.
+
+Everything lives outside the `.app` bundle: host routes + a client bundle
+installed into the `web` profile, exactly like any other DSH plugin.
+
+## What it does
+
+| Surface | Behaviour |
+|---|---|
+| File link in chat / tool card / deliverables | Opens the panel at exactly the path the link names — the string the link carries, joined to the workspace root when it is relative. No basename hunting, no nearest-match search: a link to something that is not there reports the absolute path it tried. |
+| Tabs | One tab per file, per session, closable, last 12 kept |
+| `Preview` | Line-numbered + highlighted (`ReadBlock`), markdown rendered (`MarkdownText`), images/PDFs inline through the raw route |
+| `Changes` | IDE-grade diff: `@@ -a,b +c,d @@` headers with real line ranges, coloured two-sided gutters, change bars, hatched filler rows, word-level emphasis, long-context collapsing, hunk jump, inline **or** side-by-side, per-hunk **revert**, whole-file revert, unified-patch copy |
+| `Review` | Every file the agent changed this session with `+N −M`, expandable before/after, per-file open/revert/patch |
+| `Files` | Lazy tree with change badges, **⌘P quick open**, **⌘⇧F content search** (bundled ripgrep) |
+| `Edit` | In-place editing, `⌘S` save, atomic write, `409` when the file moved under you |
+| Line work | Click (or shift-click) a line → copy `path:line` reference, add a review note |
+| Notes | Per-session review notes with copy-out, for steering the agent |
+| Auto-refresh | Polls the open file; a dirty editor is marked *changed on disk* instead of being overwritten; a green dot shows the live state |
+| Narrow windows | When the layout resolves the right column to 0 (its centre column demands 640px), the panel docks as a slide-over pinned to the window with its own drag handle, instead of rendering invisibly |
+| Close | Column collapses and the shipped tool-details panel gets its seat back |
+
+Keyboard: `⌘S` save · `⌘F` find in file · `⌘⇧F` search in files · `⌘P` quick open · `⌘W` close tab · `Esc` closes palette → find → panel.
+
+The panel borrows the layout's `details` seat **only while it is open**
+(`priority: -1000`), so tool-call details keep working untouched: clicking a tool
+call closes the panel and restores the shipped panel.
+
+## Install
+
+Requirements: DSH Desktop 0.8.x, Node 20+. Launch DSH Desktop at least once so it
+creates its harness home.
+
+**One command, any machine** (macOS, Linux, Windows):
+
+```sh
+npx --yes github:thanhdz235123-commits/dsh-file-panel install
+```
+
+Then reload the DSH window — `Cmd-R` / `Ctrl-R`. The host half is picked up by the
+profile's patch watcher immediately; the client half needs the reload.
+
+From a checkout, or offline:
+
+```sh
+git clone https://github.com/thanhdz235123-commits/dsh-file-panel
+cd dsh-file-panel
+node bin/dsh-file-panel.mjs install
+```
+
+Point it somewhere else when the harness home is not the default:
+
+```sh
+node bin/dsh-file-panel.mjs install --home "/path/to/harness" --profile web
+```
+
+### Supported platforms
+
+| OS | Harness home the installer picks |
+|---|---|
+| macOS | `~/Library/Application Support/dsh-desktop/harness` |
+| Linux | `$XDG_CONFIG_HOME/dsh-desktop/harness`, else `~/.config/dsh-desktop/harness` |
+| Windows | `%APPDATA%\dsh-desktop\harness` |
+
+Everything is Node 20+ and browser APIs: paths go through `node:path`, the panel
+learns the host's separator from `/api/dsh-file-panel.health`, and the bundled
+ripgrep is resolved as `rg` or `rg.exe`. `git` is optional — without it the
+`Changes` tab reports session edits only. Run the installer's `doctor` to see what
+a machine is missing:
+
+```sh
+npx --yes github:thanhdz235123-commits/dsh-file-panel doctor
+```
+
+### What the installer does
+
+Two shapes, and they never overlap — pick one:
+
+| Shape | Command | How it activates |
+|---|---|---|
+| **copy** (default) | `install` | files land in `<profile>/node_modules/dsh-file-panel`, inserted from the profile's own patch layer. No package manager runs, no lockfile is touched. |
+| **dependency** | `install --dep` | adds `dsh-file-panel` to `<profile>/package.json` dependencies + `dsh.profile.bundles`; the profile's own package manager installs it. The bundle brings its patch layer along, so no hand-written row is written. |
+
+```sh
+node bin/dsh-file-panel.mjs status     # what is installed where, and which build
+node bin/dsh-file-panel.mjs doctor     # is this machine able to host it
+node bin/dsh-file-panel.mjs uninstall  # remove the package, the patch row and the dependency
+```
+
+`--dep` installs from `github:thanhdz235123-commits/dsh-file-panel` by default; pass
+`--spec <spec>` for a fork, a tag (`github:you/dsh-file-panel#v0.3.4`) or a local
+path (`file:/path/to/checkout`). Every command is idempotent, and `uninstall`
+removes exactly what `install` wrote — an emptied patch layer is reset to `[]` so
+the YAML stays parseable.
+
+## Configuration
+
+A JSON body/query option per route; the panel itself has no settings file:
+
+- `POST /api/dsh-file-panel.write` refuses any path outside the session
+  workspace (`403`) and any save whose `expectedSha256` no longer matches (`409`).
+- The poll interval is `POLL_INTERVAL_MS` in `client.js` (default 2000 ms).
+
+## Host routes
+
+All exact Fetch routes on the `connection` service, so they inherit the browser
+session auth fence (`401` without the harness cookie, `403` on a foreign
+`Origin`/`Host`).
+
+| Route | Purpose |
+|---|---|
+| `GET /api/dsh-file-panel.file?path&cwd` | content, language, lines, size, mtime, sha256, canonical path, repo info |
+| `GET /api/dsh-file-panel.raw?path&cwd` | raw bytes with a content type (images, PDF, media) |
+| `GET /api/dsh-file-panel.tree?path&cwd` | one directory level (dirs first, 4000-entry cap) |
+| `GET /api/dsh-file-panel.search?q&cwd&kind=files\|content&limit` | quick-open walk, or content search through the harness' bundled ripgrep |
+| `GET /api/dsh-file-panel.changes?sessionId&cwd` | every path changed in the session, with `+N −M` |
+| `GET /api/dsh-file-panel.diff?path&cwd&sessionId&source` | hunks: `session` (`data.meta.diffs`), `git` (`git diff HEAD`), or `none` |
+| `GET /api/dsh-file-panel.stat?path&cwd` | size/mtime (poll) |
+| `POST /api/dsh-file-panel.write` | atomic write + stale guard |
+| `POST /api/dsh-file-panel.revert` | chunk-level undo: replace one hunk's `newText` with its `oldText` under the same guard |
+| `GET /api/dsh-file-panel.health` · `.probe` | service probe · session reader diagnostics |
+
+## How the session diff is read
+
+The panel keeps a **live per-session diff index** instead of re-scanning logs:
+
+1. **Seed, once per session** — `ctx.sessionQuery.readSession(id)` (the harness'
+   own complete pass) and, for sessions it refuses or has not persisted, the log
+   under `$DSH_HOME/sessions/<group>/<id>/session.jsonl.zstd` decoded **frame by
+   frame**. A DSH log is one concatenated Zstandard frame per append; boundaries
+   come from walking the frame/block headers (the magic byte pattern also occurs
+   inside compressed payloads) because Node's `zstdDecompressSync` decodes only
+   the first frame. The log seed is bounded (newest 6000 frames) and yields to
+   the event loop between batches, so it never stalls the harness.
+2. **Stay fresh for free** — `ctx.on('session/event', …)` folds every later
+   `tool/result` carrying `meta.diffs` into that index (dedup by `seq`). Panel
+   reads are then O(1): measured on a 4.5 MB / 208k-event session, the first read
+   costs ~5 s (the harness' own pass) and every read after it ~20 ms, with no
+   re-read even minutes later.
+
+Responses carry `live` / `sessionLive` so the source is visible. Without hunks
+the `Changes` tab falls back to `git diff HEAD`, and reports `none` when the
+worktree is clean.
+
+## Verified on a live 4.5 MB session
+
+Measured on the harness' own running instance (208k logged events): the seeding
+read costs ~5.7 s once per session, every read after it **0.02 s with
+`live: true`**, and a real agent tool edit lands in the `Changes` tab through the
+session event stream — no re-read.
+
+## Restarting
+
+The client half is hot-reloaded by the harness (~0.5 s after `client.js` changes).
+**Host-half changes need a restart** (module-level HMR needs Node internals the
+packaged host cannot provide): quit DSH Desktop, relaunch it.
+
+## Known limits
+
+- The right column only renders for a **current session that is not blank** (the
+  layout's own gate). Without one, the click keeps opening the file externally
+  instead of swallowing it.
+- A hand-written session log that is not byte-exact can make
+  `sessionQuery.readSession` refuse the whole log; the persisted-log fallback
+  covers it.
+- Binary and >1.5 MB files are announced, not rendered.
+- `Open IDE` reuses the captured native opener — it is the pre-existing
+  behaviour, unchanged.
+
+## Where this mirrors Antigravity
+
+The panel follows the Antigravity artifact/review surfaces: an in-app review
+column instead of an external editor, chunk-level accept/reject (here: revert),
+inline **and** side-by-side diff modes, per-file change list, markdown and image
+artifacts, and code search from the same column — see the
+[Antigravity artifacts docs](https://antigravity.google/docs/artifacts) and the
+[diff-view guide](https://antigravitylab.net/en/articles/editor/antigravity-diff-view-advanced-guide).
+
+## Changelog
+
+- **0.3.5** — a link opens **exactly** the path it names. The basename resolver (and its "pick one of these similar files" list) is gone: a link to `<root>/index.js` opens that file or says it is not there, it never opens a same-named file from somewhere else. The error state shows the exact link string and the absolute path it resolved to, plus an opt-in `Search workspace` button that opens nothing until you pick. Server-side `resolve` stays available as an API for tooling; the link flow no longer calls it.
+- **0.3.4** — one file is now one tab, always. A chat link is resolved **before** its tab exists (so a wrong spelling can no longer leave an empty duplicate tab next to the real file) and every async result is matched to its tab by a stable id instead of by a path string. Added: a full-path bar under the file name (click to copy), a file-details strip (path, relative, size, lines, modified, sha256, language, encoding, session +/- , link origin), tooltips with the absolute path on tree rows, `Copy path` in Review, an `Opening <path>…` banner while a link resolves, an on-demand load when you select a tab that has nothing loaded, and a 120-entry event trace in `window.__dshFilePanel.state(sessionId).events`.
+- **0.3.3** — fixed a `ReferenceError` in the image surface that crashed the panel and made the slot framework abdicate it (every later surface silently disappeared); the panel now docks in narrow windows instead of rendering at 0px; a resolved link no longer leaves a dead tab.
+- **0.3.1** — rebuilt the diff renderer: aligned LCS rows with real old/new line numbers, IDE theme colours, change bars, hatched empty sides, collapsible context, single-line hunk headers with `⌖` jump and `↺` revert, plus a narrow-panel hint for side-by-side.
+- **0.3.0** — multi-tab files, Review surface, per-hunk/whole-file revert, side-by-side diff with word-level emphasis, quick open + ripgrep content search, markdown and image preview, line selection + notes; **fixed** the panel leaking one session's file into another session's column (the seat now closes when the session changes).
+- **0.2.1** — live per-session diff index (seed once, then `session/event`), so panel reads stay O(1).
+- **0.2.0** — correct Zstandard frame walking, bounded/yielding log scans, canonical path matching, non-blocking client loads.
+
+## License
+
+MIT
