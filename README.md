@@ -33,6 +33,20 @@ The panel borrows the layout's `details` seat **only while it is open**
 (`priority: -1000`), so tool-call details keep working untouched: clicking a tool
 call closes the panel and restores the shipped panel.
 
+## Screenshots
+
+Captured from a live rig (synthetic session, fixture workspace) — cropped to the
+panel itself, never the chat:
+
+<p align="center">
+  <img src="docs/screenshots/panel-preview.png" width="24%" alt="Preview surface — syntax-highlighted file, path bar and tab strip">
+  <img src="docs/screenshots/panel-changes.png" width="24%" alt="Changes surface — session diff with hunk header, change bars, word-level emphasis and revert">
+  <img src="docs/screenshots/panel-files.png" width="24%" alt="Files surface — lazy tree with change badges, quick open and ripgrep content search">
+  <img src="docs/screenshots/panel-review.png" width="24%" alt="Review surface — every file the agent changed this session with +N −M">
+</p>
+
+*Preview · Changes · Files · Review — the panel docked in the harness' right column.*
+
 ## Install
 
 Requirements: DSH Desktop 0.8.x, Node 20+. Launch DSH Desktop at least once so it

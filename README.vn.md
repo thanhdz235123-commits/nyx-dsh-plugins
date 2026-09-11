@@ -29,6 +29,20 @@ Phím tắt: `⌘S` lưu · `⌘F` tìm trong file · `⌘⇧F` tìm trong toàn
 Panel chỉ **mượn ghế `details`** khi đang mở (`priority: -1000`), nên phần xem chi tiết tool call
 không bị ảnh hưởng: click vào 1 tool call là panel tự nhường ghế.
 
+## Ảnh chụp
+
+Chụp thật từ rig (session tổng hợp, workspace fixture) — cắt đúng phần panel,
+không lấy phần chat:
+
+<p align="center">
+  <img src="docs/screenshots/panel-preview.png" width="24%" alt="Surface Preview — file tô màu cú pháp, thanh path và dải tab">
+  <img src="docs/screenshots/panel-changes.png" width="24%" alt="Surface Changes — diff của session: header hunk, change bar, nhấn mạnh từng từ, revert">
+  <img src="docs/screenshots/panel-files.png" width="24%" alt="Surface Files — cây lazy có badge thay đổi, quick open, tìm nội dung bằng ripgrep">
+  <img src="docs/screenshots/panel-review.png" width="24%" alt="Surface Review — các file agent đã sửa trong session kèm +N −M">
+</p>
+
+*Preview · Changes · Files · Review — panel dock ở cột phải của harness.*
+
 ## Cài đặt
 
 Cần: DSH Desktop 0.8.x, Node 20+. Mở DSH Desktop một lần để nó tạo harness home.

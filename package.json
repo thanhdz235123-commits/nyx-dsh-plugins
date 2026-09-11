@@ -56,6 +56,7 @@
     "client.js",
     "cordis.patch.yml",
     "bin/",
+    "docs/",
     "README.md",
     "README.vn.md",
     "LICENSE"
