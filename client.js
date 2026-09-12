@@ -57,6 +57,10 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /** The build this client is. Shown in the footer so it is never a guess
+     *  which version a window is running. */
+    const CLIENT_BUILD = '0.4.1';
+
     let tabSeq = 0;
 
     // The host reports its path separator in /health; until it answers we assume
@@ -220,8 +224,9 @@ window.__ModuleLoader__.load({
         && state !== undefined
         && (state.tabs.length > 0 || state.notice !== null || state.pending !== null || state.tab !== 'preview');
       if (showing === true) {
-        document.body.setAttribute('data-dfp-docked', '1');
-        document.body.style.setProperty('--dfp-dock-width', `${clampDockWidth(runtime.dockWidth)}px`);
+        const push = pushWidth();
+        document.body.setAttribute('data-dfp-docked', push > 0 ? '1' : '0');
+        document.body.style.setProperty('--dfp-dock-width', `${push}px`);
       } else {
         document.body.removeAttribute('data-dfp-docked');
       }
@@ -291,7 +296,7 @@ window.__ModuleLoader__.load({
       style.id = STYLE_ID;
       style.dataset.plugin = 'dsh-file-panel';
       style.textContent = `
-.dfp-root { display:flex; flex-direction:column; height:100%; min-height:0; color:var(--dsw-alias-label-primary, inherit); font-size:13px; }
+.dfp-root { display:flex; flex-direction:column; height:100%; min-height:0; color:var(--dsw-alias-label-primary, inherit); font-size:13px; overflow:hidden; }
 .dfp-header { display:flex; align-items:center; gap:6px; padding:8px 10px 6px; border-bottom:.5px solid var(--dsw-alias-border-l2, rgba(128,128,128,.25)); }
 .dfp-headline { display:flex; flex-direction:column; min-width:0; flex:1; gap:2px; }
 .dfp-name { font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -1604,7 +1609,12 @@ body[data-dfp-docked="1"] .dfp-toggle { right: var(--dfp-dock-width, 420px); opa
           state.notes.length > 0 ? React.createElement('span', null, `${state.notes.length} note${state.notes.length === 1 ? '' : 's'}`) : null,
           React.createElement('span', { style: { marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '6px' }, title: 'auto-refresh' },
             React.createElement('span', { className: 'dfp-live' }),
-            narrow === true ? null : 'auto-refresh')));
+            narrow === true ? null : 'auto-refresh'),
+          React.createElement('span', {
+            className: 'dfp-badge',
+            title: 'client build — reload the window (Cmd-R) after installing a new one',
+            'data-build': CLIENT_BUILD
+          }, CLIENT_BUILD)));
     }
 
     /** The panel host: the layout's right column, pinned to the window when that
@@ -1643,7 +1653,9 @@ body[data-dfp-docked="1"] .dfp-toggle { right: var(--dfp-dock-width, 420px); opa
       // file tree is content, so asking for the panel always draws something.
       const empty = seatState.tabs.length === 0 && seatState.notice === null && seatState.pending === null && seatState.tab === 'preview';
       if (docked === true && empty === true) return null;
-      const dockWidth = docked === true ? clampDockWidth(runtime.dockWidth) : runtime.dockWidth;
+      const dockWidth = docked === true
+        ? Math.max(280, Math.min(clampDockWidth(runtime.dockWidth), window.innerWidth - 320))
+        : runtime.dockWidth;
       return React.createElement('div', {
         className: 'dfp-root',
         ref,
@@ -1718,13 +1730,31 @@ body[data-dfp-docked="1"] .dfp-toggle { right: var(--dfp-dock-width, 420px); opa
      * 640px centre must all fit, otherwise the column resolves to 0 and a seated
      * panel would render invisibly.
      */
-    /** Width of the layout's right column — 0 when the layout refuses it. */
+    /** Width of the layout's own right column — 0 when the layout refuses it. */
     function detailsColumnWidth() {
+      const column = document.querySelector('[class*="detailsCol"]');
+      if (column !== null) {
+        const width = Math.round(column.getBoundingClientRect().width);
+        if (width >= 0) return width;
+      }
       const frame = document.querySelector('[data-shell-overlay]')?.parentElement ?? null;
       if (frame === null) return 0;
-      const widths = [...frame.children].map((child) => Math.round(child.getBoundingClientRect().width));
-      const details = widths[2];
-      return typeof details === 'number' && details > 0 ? details : 0;
+      return Math.round(frame.children[2]?.getBoundingClientRect().width ?? 0);
+    }
+
+    /** Width of the conversation column, for deciding how much room we may take. */
+    function centerColumnWidth() {
+      const column = document.querySelector('[class*="centerCol"]');
+      if (column !== null) return Math.round(column.getBoundingClientRect().width);
+      const frame = document.querySelector('[data-shell-overlay]')?.parentElement ?? null;
+      if (frame === null) return window.innerWidth;
+      return Math.round(frame.children[1]?.getBoundingClientRect().width ?? window.innerWidth);
+    }
+
+    /** How far the conversation may be inset: never below 520px of content. */
+    function pushWidth() {
+      const room = centerColumnWidth() - 520;
+      return Math.max(0, Math.min(clampDockWidth(runtime.dockWidth), room));
     }
 
     /** Sidebar width as the layout resolved it (rail width when collapsed). */
@@ -1778,10 +1808,22 @@ body[data-dfp-docked="1"] .dfp-toggle { right: var(--dfp-dock-width, 420px); opa
       if (frame === null) return;
       layoutObserver = new ResizeObserver(() => {
         if (runtime.visible !== true || runtime.owner === null) return;
-        const want = columnFits() ? 'column' : 'overlay';
-        if (want !== runtime.mode) applyPanelHost(ctx, runtime.owner);
+        const want = detailsColumnWidth() >= 300 ? 'column' : 'overlay';
+        const settled = runtime.mode === 'column' && rootHasWidth() === true;
+        if (want === 'overlay' && runtime.mode === 'column' && settled !== true) return;
+        if (want !== runtime.mode) {
+          runtime.mode = want;
+          notify();
+        }
       });
       for (const child of frame.children) layoutObserver.observe(child);
+      const column = document.querySelector('[class*="detailsCol"]');
+      if (column !== null) layoutObserver.observe(column);
+    }
+
+    function rootHasWidth() {
+      const root = document.querySelector('.dfp-root');
+      return root !== null && Math.round(root.getBoundingClientRect().width) >= 300;
     }
 
     function unmountOverlay() {
@@ -1803,15 +1845,12 @@ body[data-dfp-docked="1"] .dfp-toggle { right: var(--dfp-dock-width, 420px); opa
 
     /** Pick the host this window can actually render, and switch live on resize. */
     function applyPanelHost(ctx, sessionId) {
-      const predicted = predictDetailsWidth();
-      runtime.mode = predicted > 0 ? 'column' : 'overlay';
+      // Decide from the column that is really there, before anything is
+      // mounted: a seat inside a 0px column paints a sliver of overflowing
+      // content at the window edge, and pushing the chat while DSH has already
+      // opened its own column squeezes the conversation twice.
+      runtime.mode = detailsColumnWidth() >= 300 ? 'column' : 'overlay';
       mountSeat(ctx, sessionId);
-      // Always ask the layout for the column, even when it looks closed: the
-      // request IS what opens it (details width preference 0 → 360).
-      if (predicted > 0) {
-        unmountOverlay();
-        void openColumn(ctx);
-      }
       notify();
       // After the first paint the real width is known: if the column handed us
       // nothing, dock instead of holding an invisible seat.
@@ -1821,9 +1860,7 @@ body[data-dfp-docked="1"] .dfp-toggle { right: var(--dfp-dock-width, 420px); opa
         if (root === null) return;
         const seatWidth = Math.round(root.getBoundingClientRect().width);
         const column = detailsColumnWidth();
-        // The layout may still be filling in; a column that never appears (or a
-        // seat the layout handed nothing) means docking instead of disappearing.
-        const want = column >= 300 || seatWidth >= 300 ? 'column' : 'overlay';
+        const want = column >= 300 && seatWidth >= 300 ? 'column' : 'overlay';
         if (want !== runtime.mode) {
           runtime.mode = want;
           notify();
@@ -2656,6 +2693,7 @@ body[data-dfp-docked="1"] .dfp-toggle { right: var(--dfp-dock-width, 420px); opa
             palette: { open: state.palette.open, kind: state.palette.kind, results: state.palette.results.length, index: state.palette.index, query: state.palette.query },
             pending: state.pending,
             notice: state.notice,
+            build: CLIENT_BUILD,
             events: state.events.slice(-40),
             changes: state.changes?.files?.length ?? 0,
             notes: state.notes.length,
@@ -2707,7 +2745,7 @@ body[data-dfp-docked="1"] .dfp-toggle { right: var(--dfp-dock-width, 420px); opa
           }))
         }
       };
-      console.log('[dsh-file-panel] ready 0.4.0', { wrapped, primitives: primitives !== null });
+      console.log(`[dsh-file-panel] ready ${CLIENT_BUILD}`, { wrapped, primitives: primitives !== null });
     }
 
     const inject = ['slots', 'sessions', 'layout', 'remote', 'remote.session'];

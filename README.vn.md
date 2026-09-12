@@ -169,6 +169,7 @@ accept/reject theo từng chunk (ở đây là revert), cả hai chế độ dif
 
 ## Changelog
 
+- **0.4.1** — panel vừa với chỗ được cấp. Việc dùng cột phải của DSH hay không giờ **đo cột trước khi mount** (seat nằm trong cột 0px từng vẽ ra một dải nội dung tràn ở mép cửa sổ), và khi không có cột thì dock chỉ chèn tối đa `cột giữa − 520px`, nên chat giữ được bề rộng đọc được thay vì bị bóp. DSH mở cột ⇒ panel nằm trong cột, không chèn, không đè.
 - **0.4.0** — panel **đẩy** chat chứ không đè, và luôn có đường vào. Dock giờ chèn padding vào cột giữa (`centerCol` = bề rộng panel) thay vì phủ lên; một tab mảnh `‹ File panel` ở mép phải (bấm để mở/đóng, `⌥⌘F` từ bất kỳ đâu), và nó bám mép panel khi panel đang mở. Mở mà chưa có file thì hiện cây workspace. Panel chỉ hiện khi được gọi — click file, bấm tab, hoặc phím tắt.
 - **0.3.9** — — dock không còn "dính": bấm ra ngoài hoặc `Escape` là panel ẩn đi; bề rộng bị chặn ở 45% cửa sổ; và dock không có gì để hiện (không tab, không notice) thì **không vẽ ra** — nên nó không thể nằm đè lên chat mà trông như lỗi.
 - **0.3.8** — panel không bao giờ vô hình. Việc nó chiếm cột phải hay dock giờ **đo thật** (độ rộng thật của cột), không đoán theo bản sao công thức chia cột của DSH: ở vài cỡ cửa sổ cột phải resolve về 0px, panel vẫn mount ở đó thành dải 0px mà vẫn giữ ghế — nhìn y như UI hỏng. `ResizeObserver` đổi qua lại giữa cột và dock ngay khi layout đổi ý.
