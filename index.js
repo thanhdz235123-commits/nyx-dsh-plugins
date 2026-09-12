@@ -23,6 +23,9 @@
  */
 
 import { randomUUID } from 'node:crypto'
+import { appendFile, mkdir } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import path from 'node:path'
 
 export const name = 'dsh-message-edit'
 /** Bumped per host revision; the health route reports it. */
@@ -44,6 +47,24 @@ const EDIT_MARKER = 'dsh-message-edit'
  * @type {Map<string, {resolve: Function, reject: Function, messageId: string, text: string, rpcId: string, timer: any, committed?: object}>}
  */
 const pendingEdits = new Map()
+
+/**
+ * Append one line to `<DSH_HOME>/dsh-message-edit-diag.jsonl`.
+ *
+ * A failed edit is otherwise invisible from the outside: the reader sees a
+ * button do nothing and there is no trace to read. Every attempt and every
+ * refusal lands here with its reason, so the next report is a fact.
+ */
+async function diag(ctx, record) {
+  try {
+    const home = ctx.get('homePaths')?.dshHome ?? process.env.DSH_HOME ?? path.join(homedir(), '.dsh')
+    const file = path.join(home, 'dsh-message-edit-diag.jsonl')
+    await mkdir(path.dirname(file), { recursive: true })
+    await appendFile(file, `${JSON.stringify({ at: Date.now(), ...record })}\n`)
+  } catch {
+    /* diagnostics never break the edit */
+  }
+}
 
 /**
  * Last committed edit per session, for the client's state route.
@@ -324,6 +345,13 @@ function installPreStepHook(ctx) {
       // let the loop behave exactly as it would without an edit.
       if (bumped && agent.phase?.kind === 'running') agent.phase.step = 0
       ctx.logger?.warn?.(`[dsh-message-edit] edit failed for ${sessionId}: ${error instanceof Error ? error.message : String(error)}`)
+      void diag(ctx, {
+        sessionId: String(sessionId).slice(0, 48),
+        messageId: String(edit.messageId).slice(0, 48),
+        phase: 'failed',
+        code: typeof error?.code === 'string' ? error.code : 'internal',
+        reason: error instanceof Error ? error.message : String(error)
+      })
       edit.reject?.(error)
       return decision
     }
@@ -465,6 +493,15 @@ async function handleEdit(ctx, request) {
     return ok({ changed: false, reason: 'identical' })
   }
   if (pendingEdits.has(sessionId)) throw coded('busy', 'Đang có một lần sửa khác chạy trên phiên này.')
+  const diagBase = {
+    sessionId: sessionId.slice(0, 48),
+    messageId: messageId.slice(0, 48),
+    textLength: text.length,
+    text: text.slice(0, 80),
+    keepImages: keepImages === null ? null : keepImages.length,
+    status: agent.status
+  }
+  await diag(ctx, { ...diagBase, phase: 'request' })
 
   // Editing while a response streams (or while prompts are queued) is legal:
   // interrupt the running turn with the harness's own user-cancel semantics,
@@ -496,6 +533,7 @@ async function handleEdit(ctx, request) {
 
   const started = startRegeneration(agent)
   if (started !== true) {
+    await diag(ctx, { ...diagBase, phase: 'refused', code: 'busy', reason: 'agent could not start a turn' })
     const pending = pendingEdits.get(sessionId)
     if (pending !== undefined) {
       if (pending.timer !== undefined) clearTimeout(pending.timer)
@@ -505,6 +543,7 @@ async function handleEdit(ctx, request) {
   }
   const committed = await promise
   await ctx.get('sessions')?.flush?.(session)
+  await diag(ctx, { ...diagBase, phase: 'committed', seq: committed.seq, shadowed: committed.shadowedCount })
   return ok({ changed: true, ...committed, requestedAt: requested })
 }
 

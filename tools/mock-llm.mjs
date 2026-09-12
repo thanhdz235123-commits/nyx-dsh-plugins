@@ -54,6 +54,16 @@ const server = createServer((request, response) => {
       connection: 'keep-alive'
     })
     const id = `chatcmpl-mock-${counter}`
+    // MOCK_LLM_TOOL_PATH makes the stub answer with one `read` tool call, so a
+    // verification run can produce a real tool/call record in the session log.
+    const toolPath = process.env.MOCK_LLM_TOOL_PATH
+    if (typeof toolPath === 'string' && toolPath !== '') {
+      response.write(`data: ${JSON.stringify({ id, object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model: 'mock', choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call_mock_1', type: 'function', function: { name: 'read', arguments: JSON.stringify({ path: toolPath }) } }] }, finish_reason: null }] })}\n\n`)
+      response.write(`data: ${JSON.stringify({ id, object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model: 'mock', choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }], usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } })}\n\n`)
+      response.write('data: [DONE]\n\n')
+      response.end()
+      return
+    }
     const pieces = chunks(text)
     const emit = (index) => {
       if (index >= pieces.length) {

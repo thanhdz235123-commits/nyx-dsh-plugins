@@ -40,7 +40,8 @@ window.__ModuleLoader__.load({
       sending: 'Đang gửi…',
       hint: 'Esc để hủy · ⌘/Ctrl+Enter để gửi',
       failed: 'Sửa tin nhắn thất bại',
-      removeImage: 'Gỡ ảnh này'
+      removeImage: 'Gỡ ảnh này',
+      emptyHint: 'Gõ nội dung (hoặc giữ ảnh) để gửi'
     }
 
     /** The Chat transcript's row identity, as `conversationContextKey` composes it. */
@@ -518,6 +519,13 @@ window.__ModuleLoader__.load({
       requestAnimationFrame(() => repositionEditor())
       startEditorTracking()
 
+      let busy = false
+      const syncSend = () => {
+        const empty = textarea.value.trim() === ''
+        send.disabled = busy || (empty && keptImages.length === 0)
+        hint.textContent = empty && keptImages.length === 0 ? LABELS.emptyHint : LABELS.hint
+      }
+
       // --- images: thumbnail + remove, loaded through the harness image cache
       const renderImages = () => {
         imageRow.textContent = ''
@@ -539,6 +547,7 @@ window.__ModuleLoader__.load({
             event.stopPropagation()
             keptImages = keptImages.filter((_, position) => position !== index)
             renderImages()
+            syncSend()
             repositionEditor()
           })
           chip.appendChild(remove)
@@ -551,10 +560,6 @@ window.__ModuleLoader__.load({
       }
       renderImages()
 
-      let busy = false
-      const syncSend = () => {
-        send.disabled = busy || textarea.value.trim() === ''
-      }
       textarea.addEventListener('input', () => {
         resizeTextarea(textarea)
         syncSend()
