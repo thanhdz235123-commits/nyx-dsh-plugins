@@ -173,53 +173,130 @@ window.__ModuleLoader__.load({
       element.type = 'button'
       element.title = LABELS.edit
       element.setAttribute('aria-label', LABELS.edit)
-      element.innerHTML = '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M11.7 2.3a1.6 1.6 0 0 1 2.3 2.3l-7.4 7.4-3 .7.7-3 7.4-7.4Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>'
+      element.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M11.7 2.3a1.6 1.6 0 0 1 2.3 2.3l-7.4 7.4-3 .7.7-3 7.4-7.4Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>'
+      // The button owns its own keep/hide: leaving a row must never take it
+      // away while the pointer is travelling towards it.
+      element.addEventListener('pointerenter', () => keepPencil())
+      element.addEventListener('pointerleave', () => releasePencil())
+      element.addEventListener('pointerdown', (event) => {
+        // pointerdown, not click: the message under the pointer can re-render
+        // between press and release, and a lost click here is a lost edit.
+        event.preventDefault()
+        event.stopPropagation()
+        openFromPencil()
+      })
       document.body.appendChild(element)
       return element
     }
 
-    /** @type {{ messageId: string, row: Element, rect: DOMRect } | null} */
+    /** The row the pencil is currently offered for (kept after hiding, so a
+     *  press always has a target even if the pointer moved a pixel). */
     let hovered = null
     let hoverTimer = null
+    let trackTimer = null
+    /** Set once the plugin is applied; the pencil press needs it. */
+    let stateCtx = null
+    /** Last written geometry, so tracking never rewrites identical values. */
+    let placed = ''
+
+    function keepPencil() {
+      if (hoverTimer !== null) {
+        clearTimeout(hoverTimer)
+        hoverTimer = null
+      }
+    }
+
+    function releasePencil() {
+      keepPencil()
+      hoverTimer = window.setTimeout(() => {
+        hoverTimer = null
+        hidePencil()
+      }, 450)
+    }
 
     function positionPencil() {
       if (hovered === null) return
       const element = pencilElement()
       const rect = hovered.row.getBoundingClientRect()
-      const size = 26
-      const top = Math.max(4, Math.round(rect.top - 6))
-      const left = Math.round(rect.right - size - 4)
-      element.style.top = `${top}px`
-      element.style.left = `${left}px`
-      element.style.display = 'grid'
+      if (rect.width === 0 && rect.height === 0) {
+        hidePencil()
+        return
+      }
+      const size = 30
+      const top = Math.round(rect.top + Math.min(8, Math.max(0, rect.height / 2 - size / 2)))
+      const left = Math.round(Math.min(rect.right - size - 8, window.innerWidth - size - 8))
+      const geometry = `${top}:${left}`
+      if (geometry !== placed) {
+        placed = geometry
+        element.style.top = `${top}px`
+        element.style.left = `${left}px`
+      }
+      if (element.style.display !== 'grid') element.style.display = 'grid'
     }
 
     function hidePencil() {
       const element = document.getElementById(PENCIL_ID)
-      if (element !== null) element.style.display = 'none'
-      hovered = null
+      if (element !== null && element.style.display !== 'none') element.style.display = 'none'
+      placed = ''
+      stopTracking()
     }
 
-    function scheduleHide() {
-      if (hoverTimer !== null) clearTimeout(hoverTimer)
-      hoverTimer = window.setTimeout(() => {
-        hoverTimer = null
-        const element = document.getElementById(PENCIL_ID)
-        if (element !== null && element.matches(':hover')) return
-        hidePencil()
-      }, 220)
+    /** Keep the button glued to its message while the transcript scrolls,
+     *  resizes, or re-renders underneath it. */
+    function startTracking() {
+      if (trackTimer !== null) return
+      trackTimer = window.setInterval(() => {
+        if (hovered === null) {
+          stopTracking()
+          return
+        }
+        positionPencil()
+      }, 120)
+    }
+
+    function stopTracking() {
+      if (trackTimer === null) return
+      clearInterval(trackTimer)
+      trackTimer = null
+    }
+
+    function offerPencil(target) {
+      hovered = target
+      positionPencil()
+      startTracking()
     }
 
     function onPointerMove(event) {
-      const target = rowAt(event.target)
-      if (target === null) {
-        if (hovered !== null) scheduleHide()
+      const target = event.target
+      const element = document.getElementById(PENCIL_ID)
+      if (element !== null && element.contains(target)) {
+        keepPencil()
         return
       }
-      const element = document.getElementById(PENCIL_ID)
-      if (element !== null && element.contains(event.target)) return
-      if (hovered !== null && hovered.messageId === target.messageId) return
-      hovered = { messageId: target.messageId, row: target.row, rect: target.row.getBoundingClientRect() }
+      const row = rowAt(target)
+      if (row === null) {
+        if (element !== null && element.style.display === 'grid') releasePencil()
+        return
+      }
+      keepPencil()
+      // Always (re)offer: the button may have been hidden by opening the editor,
+      // and positionPencil only writes when the geometry actually changed.
+      offerPencil({ messageId: row.messageId, row: row.row })
+    }
+
+    function openFromPencil() {
+      if (hovered === null) return
+      const row = hovered.row
+      const messageId = hovered.messageId
+      const message = editableMessages().find((entry) => entry.id === messageId)
+      if (!row.isConnected) return
+      hidePencil()
+      closeEditor()
+      openEditor(stateCtx, row, messageId, message?.text ?? '')
+    }
+
+    function onViewportChange() {
+      if (hovered === null) return
       positionPencil()
     }
 
@@ -442,13 +519,15 @@ window.__ModuleLoader__.load({
       element.textContent = `
 #${PENCIL_ID} {
   position: fixed; z-index: 2147482900; display: none; place-items: center;
-  width: 26px; height: 26px; padding: 0; border: none; border-radius: 999px;
-  background: var(--dsw-specific-menu, #2b2b2f); color: var(--dsw-alias-label-secondary, #b9bac1);
-  box-shadow: var(--dsw-elevation-panel, 0 2px 10px rgba(0,0,0,.35)); cursor: pointer;
-  transition: opacity .12s linear;
+  box-sizing: border-box; width: 30px; height: 30px; padding: 0; margin: 0;
+  border: .5px solid var(--dsw-alias-border-l3, #3d3d44); border-radius: 999px;
+  background: var(--dsw-specific-menu, #2b2b2f); color: var(--dsw-alias-label-secondary, #c3c4cb);
+  box-shadow: var(--dsw-elevation-panel, 0 2px 10px rgba(0,0,0,.4));
+  cursor: pointer; touch-action: none;
+  transition: color .1s linear, background .1s linear, border-color .1s linear;
 }
-#${PENCIL_ID}:hover { color: var(--dsw-alias-label-primary, #fff); background: var(--dsw-alias-interactive-bg-hover, #3a3a40); }
-#${PENCIL_ID}[data-busy="1"] { opacity: .45; cursor: default; }
+#${PENCIL_ID}:hover { color: #fff; border-color: var(--dsw-alias-label-tertiary, #8b8d98); background: var(--dsw-alias-interactive-bg-hover, #3a3a40); }
+#${PENCIL_ID}:active { background: var(--dsw-alias-state-business-primary, #4d6bfe); border-color: transparent; color: #fff; }
 #${EDITOR_ID} .dme-card {
   box-sizing: border-box; width: 100%; padding: 10px 12px 8px;
   border: .5px solid var(--dsw-alias-border-l2, #3a3a40); border-radius: 14px;
@@ -493,31 +572,23 @@ window.__ModuleLoader__.load({
         console.warn('[dsh-message-edit] conversation node registration failed:', error?.message ?? error)
       }
 
+      stateCtx = ctx
+      pencilElement()
       document.addEventListener('pointermove', onPointerMove, true)
-      document.addEventListener('pointerleave', () => hidePencil(), true)
-      const pencil = pencilElement()
-      pencil.addEventListener('click', () => {
-        if (hovered === null) return
-        const message = editableMessages().find((entry) => entry.id === hovered.messageId)
-        const row = hovered.row
-        const id = hovered.messageId
-        hidePencil()
-        closeEditor()
-        openEditor(ctx, row, id, message?.text ?? '')
-      })
-      pencil.addEventListener('pointerenter', () => {
-        if (hoverTimer !== null) {
-          clearTimeout(hoverTimer)
-          hoverTimer = null
-        }
-      })
-      pencil.addEventListener('pointerleave', () => scheduleHide())
+      // The transcript scrolls under the button; keep it glued to its message.
+      // No `pointerleave` listener anywhere: a leave fires for every descendant
+      // the pointer crosses, which is what made the button blink away.
+      window.addEventListener('scroll', onViewportChange, true)
+      window.addEventListener('resize', onViewportChange)
 
       ctx.effect(() => () => {
         closeEditor()
         hidePencil()
         document.removeEventListener('pointermove', onPointerMove, true)
+        window.removeEventListener('scroll', onViewportChange, true)
+        window.removeEventListener('resize', onViewportChange)
         if (pollTimer !== null) clearInterval(pollTimer)
+        stateCtx = null
       }, 'dsh-message-edit DOM listeners')
 
       void refresh(ctx, true)
@@ -537,6 +608,19 @@ window.__ModuleLoader__.load({
           if (row === undefined) return false
           const message = editableMessages().find((entry) => entry.id === messageId)
           openEditor(ctx, row, messageId, message?.text ?? '')
+          return true
+        },
+        pencilTarget: () => (hovered === null ? null : { messageId: hovered.messageId, connected: hovered.row.isConnected }),
+        pencilBox: () => {
+          const element = document.getElementById(PENCIL_ID)
+          if (element === null) return null
+          const rect = element.getBoundingClientRect()
+          return { display: element.style.display, x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height) }
+        },
+        hoverAt: (x, y) => {
+          const target = document.elementFromPoint(x, y)
+          if (target === null) return false
+          target.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: x, clientY: y }))
           return true
         },
         closeEditor,
