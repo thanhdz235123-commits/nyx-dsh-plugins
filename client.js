@@ -61,7 +61,7 @@ window.__ModuleLoader__.load({
 
     /** The build this client is. Shown in the footer so it is never a guess
      *  which version a window is running. */
-    const CLIENT_BUILD = '0.5.0';
+    const CLIENT_BUILD = '0.5.1';
 
     let tabSeq = 0;
 
@@ -1782,9 +1782,10 @@ body[data-ds-dark-theme] .dfp-root {
     let seatDisposer = null;
     let seatMountedFor = null;
     let originalOpenWorkspacePath = null;
+    // Read-only handle on the layout service, for diagnostics. The panel never
+    // replaces anything on it: an earlier build wrapped `openDetails` and could
+    // take the app's own panel action down with it.
     let layoutService = null;
-    let originalLayoutOpen = null;
-    let originalLayoutClose = null;
     let interceptEnabled = true;
     let pollTimer = null;
     let paletteToken = 0;
@@ -1897,11 +1898,17 @@ body[data-ds-dark-theme] .dfp-root {
       if (frame === null) return;
       layoutObserver = new ResizeObserver(() => {
         if (runtime.visible !== true || runtime.owner === null) return;
-        const want = detailsColumnWidth() >= 300 ? 'column' : 'overlay';
-        const settled = runtime.mode === 'column' && rootHasWidth() === true;
-        if (want === 'overlay' && runtime.mode === 'column' && settled !== true) return;
-        if (want !== runtime.mode) {
-          runtime.mode = want;
+        // The layout opens its details column when the app has a target of its
+        // own — a tool call, a search result. The panel's seat would shadow the
+        // app's own panel there, so the panel steps aside instead. It never
+        // opens that column itself, so a column here always means "the app
+        // wants it".
+        if (detailsColumnWidth() >= 300) {
+          closePanel(ctx);
+          return;
+        }
+        if (runtime.mode !== 'overlay') {
+          runtime.mode = 'overlay';
           notify();
         }
       });
@@ -1947,6 +1954,11 @@ body[data-ds-dark-theme] .dfp-root {
       // nothing, dock instead of holding an invisible seat.
       window.requestAnimationFrame(() => {
         if (runtime.visible !== true || runtime.owner !== sessionId) return;
+        if (detailsColumnWidth() >= 300) {
+          // The app is showing its own details panel: get out of its way.
+          closePanel(ctx);
+          return;
+        }
         const root = document.querySelector('.dfp-root');
         if (root === null) return;
         const seatWidth = Math.round(root.getBoundingClientRect().width);
@@ -2027,91 +2039,102 @@ body[data-ds-dark-theme] .dfp-root {
       runtime.owner = null;
     }
 
-    /** Ask the layout for its details column. This call is what opens it. */
-    async function openColumn(ctx) {
-      const attempts = [
-        () => originalLayoutOpen?.(),
-        () => layoutService?.openDetails?.(),
-        () => ctx.get('layout')?.openDetails?.()
-      ];
-      for (const attempt of attempts) {
-        try {
-          attempt();
-          return;
-        } catch (error) {
-          console.warn('[dsh-file-panel] openDetails attempt failed:', error?.message ?? error);
-        }
-      }
-    }
-
-    function closePanel(ctx) {
-      runtime.visible = false;
-      unmountOverlay();
-      unmountSeat();
-      notify();
-      try {
-        originalLayoutClose?.();
-      } catch {
-        /* already closed */
-      }
-    }
-
-    /** The seat never outlives its owning session. */
-    function watchSessions(ctx) {
-      const sessions = ctx.get('sessions');
-      if (sessions?.list?.subscribe === undefined) return;
-      sessions.list.subscribe(() => {
-        if (runtime.visible !== true || runtime.owner === null) return;
-        const current = sessions.list.getSnapshot()?.current ?? null;
-        if (current !== runtime.owner) closePanel(ctx);
-      });
-    }
+    const openerOriginals = new WeakMap();
 
     function installOpenerInterceptor(ctx) {
       const service = ctx.remote?.session;
       if (service === undefined) return false;
+      // Wrap once, ever. A hot reload must not stack wrappers on the app's own
+      // service, and the original must stay reachable so the panel can be
+      // removed without a restart.
+      if (openerOriginals.has(service) === true) {
+        originalOpenWorkspacePath = openerOriginals.get(service);
+        return true;
+      }
       const descriptor = Object.getOwnPropertyDescriptor(service, 'openWorkspacePath');
       if (descriptor === undefined) return false;
       const callOriginal = descriptor.get !== undefined ? descriptor.get.call(service) : descriptor.value;
-      originalOpenWorkspacePath = (request, signal) => callOriginal(request, signal);
+      if (typeof callOriginal !== 'function') return false;
+      originalOpenWorkspacePath = callOriginal.bind(service);
+      // A WeakMap, not a property on the app's own object: writing to it is
+      // exactly the kind of meddling that must never happen.
+      openerOriginals.set(service, originalOpenWorkspacePath);
       Object.defineProperty(service, 'openWorkspacePath', {
         configurable: true,
         enumerable: true,
         writable: true,
         value: async (request, signal) => {
-          const target = request?.path;
-          if (interceptEnabled === true && typeof target === 'string' && target.length > 0 && canShowPanel(ctx)) {
-            void openPath(ctx, target).catch((error) => {
-              console.warn('[dsh-file-panel] open failed:', error?.message ?? error);
-            });
+          // Whatever happens inside the panel, the caller always gets the
+          // answer the app would have given without the plugin.
+          try {
+            const target = request?.path;
+            if (interceptEnabled !== true || typeof target !== 'string' || target.length === 0 || canShowPanel(ctx) !== true) {
+              return await originalOpenWorkspacePath(request, signal);
+            }
+            void reportOpener(target, true);
+            try {
+              await openPath(ctx, target);
+            } catch (error) {
+              console.warn('[dsh-file-panel] open failed, falling back to the app opener:', error?.message ?? error);
+              return await originalOpenWorkspacePath(request, signal);
+            }
             return { ok: true, value: { opened: true } };
+          } catch (error) {
+            console.warn('[dsh-file-panel] opener wrapper failed:', error?.message ?? error);
+            try {
+              return await originalOpenWorkspacePath(request, signal);
+            } catch (inner) {
+              return { ok: false, error: { message: String(inner?.message ?? inner) } };
+            }
           }
-          return originalOpenWorkspacePath(request, signal);
         }
       });
       return true;
     }
 
-    function installLayoutYield(ctx) {
-      const layout = ctx.get('layout');
-      if (layout === undefined) return;
-      layoutService = layout;
-      const prototype = Object.getPrototypeOf(layout);
-      if (typeof prototype?.openDetails === 'function') {
-        // Bind the instance: the implementation reaches into private fields, so
-        // calling the raw prototype method with a foreign `this` throws and the
-        // request is lost. A bound copy keeps the real receiver.
-        originalLayoutOpen = layout.openDetails.bind(layout);
-        Object.defineProperty(layout, 'openDetails', {
+    /** Put DSH's own file opener back, exactly as it was. */
+    function uninstallOpenerInterceptor(ctx) {
+      const service = ctx?.remote?.session;
+      if (service === undefined || openerOriginals.has(service) !== true) return false;
+      try {
+        Object.defineProperty(service, 'openWorkspacePath', {
           configurable: true,
+          enumerable: true,
           writable: true,
-          value: function openDetails() {
-            if (runtime.visible === true) closePanel(ctx);
-            return originalLayoutOpen.call(this);
-          }
+          value: openerOriginals.get(service)
         });
+        openerOriginals.delete(service);
+        return true;
+      } catch {
+        return false;
       }
-      if (typeof prototype?.closeDetails === 'function') originalLayoutClose = layout.closeDetails.bind(layout);
+    }
+
+    let lastOpenerReport = 0;
+
+    function reportOpener(target, took) {
+      const now = Date.now();
+      if (now - lastOpenerReport < 500) return;
+      lastOpenerReport = now;
+      void postHost('diag', {
+        reason: 'opener',
+        build: CLIENT_BUILD,
+        target: String(target),
+        took,
+        canShowPanel: panelContext === null ? null : canShowPanel(panelContext)
+      }).catch(() => {});
+    }
+
+    /**
+     * (removed) The panel used to wrap the layout service's own `openDetails` so
+     * it could step aside when DSH opened its details column. Monkey-patching a
+     * service the app owns is how a plugin breaks the app: the wrapper chains
+     * across client hot-reloads, and a stale link in that chain takes DSH's own
+     * panel action down with it. The panel now yields by watching the column's
+     * width instead, which cannot break anything.
+     */
+    function installLayoutYield(ctx) {
+      layoutService = ctx.get('layout') ?? null;
     }
 
     // ------------------------------------------------------------------
@@ -2139,6 +2162,24 @@ body[data-ds-dark-theme] .dfp-root {
       }
       state.active = state.tabs.indexOf(tab);
       return tab;
+    }
+
+    function closePanel(ctx) {
+      runtime.visible = false;
+      unmountOverlay();
+      unmountSeat();
+      notify();
+    }
+
+    /** The seat never outlives its owning session. */
+    function watchSessions(ctx) {
+      const sessions = ctx.get('sessions');
+      if (sessions?.list?.subscribe === undefined) return;
+      sessions.list.subscribe(() => {
+        if (runtime.visible !== true || runtime.owner === null) return;
+        const current = sessions.list.getSnapshot()?.current ?? null;
+        if (current !== runtime.owner) closePanel(ctx);
+      });
     }
 
     /**
@@ -2736,6 +2777,20 @@ body[data-ds-dark-theme] .dfp-root {
     }
 
     function apply(ctx) {
+      // The inspection face goes up first: if a later step fails, the panel can
+      // still be looked at instead of vanishing without a trace.
+      if (window.__dshFilePanel === undefined) {
+        window.__dshFilePanel = { early: true, error: null };
+      }
+      try {
+        applyInner(ctx);
+      } catch (error) {
+        window.__dshFilePanel = { ...(window.__dshFilePanel ?? {}), early: false, error: String(error?.stack ?? error) };
+        console.warn('[dsh-file-panel] apply failed:', error);
+      }
+    }
+
+    function applyInner(ctx) {
       ensureStyles();
       ensureToggleHost();
       panelContext = ctx; // eslint-disable-line no-unused-expressions
@@ -2846,6 +2901,15 @@ body[data-ds-dark-theme] .dfp-root {
         }
       };
       console.log(`[dsh-file-panel] ready ${CLIENT_BUILD}`, { wrapped, primitives: primitives !== null });
+      void postHost('diag', {
+        reason: 'apply',
+        build: CLIENT_BUILD,
+        wrapped,
+        primitives: primitives !== null,
+        inject: inject.join(','),
+        hasRemote: ctx.remote !== undefined,
+        hasSessionRemote: ctx.remote?.session !== undefined
+      }).catch(() => {});
       // Announce arrival and then keep reporting while the panel is on screen.
       reportDiag('loaded', true);
       window.setTimeout(() => reportDiag('settled', true), 2500);
