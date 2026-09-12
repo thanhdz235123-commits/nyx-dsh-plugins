@@ -2242,6 +2242,10 @@ body[data-ds-dark-theme] .dfp-root {
       // Selectors, interpolations and shell noise are not doors.
       if (/^[#!@$%^&*+=]/.test(text) === true) return false;
       if (/^\.($|[^/\\])/.test(text) === true) return false;
+      // "Opens like a path": an absolute form, a home form, or an explicit
+      // `.` / `..` step. This is the only shape allowed to contain whitespace,
+      // because a directory really can be named "Code /Python".
+      const pathOpening = /^([/\\]|~|\.\.?[/\\]|[a-zA-Z]:[/\\])/.test(text);
       const absolute = /^([/\\]|~|[a-zA-Z]:[/\\])/.test(text);
       const segments = text.split(/[/\\]/).filter((part) => part.length > 0);
       const head = segments[0] ?? '';
@@ -2254,7 +2258,12 @@ body[data-ds-dark-theme] .dfp-root {
       }
       const last = segments.pop() ?? '';
       if (last.length === 0) return false;
-      if (absolute === true) return true;
+      if (pathOpening === true) return true;
+      // A relative token with an inner space is prose that happens to end in a
+      // filename ("same index.js"), never a path a reader meant to open: a real
+      // relative path has no way to say where the name stops and the prose
+      // begins, so it is not offered.
+      if (/\s/.test(text) === true) return false;
       return /\.[a-z0-9]{1,8}$/i.test(last);
     }
 
@@ -2591,10 +2600,17 @@ body[data-ds-dark-theme] .dfp-root {
      * @param sessionId - session whose log is read.
      * @returns the cached paths, or [] when nothing is cached yet.
      */
-    function recordedPathsFor(sessionId) {
+    async function recordedPathsFor(sessionId) {
       const cached = recordedPathsCache.get(sessionId);
-      if (cached === undefined || Date.now() - cached.at >= RECORDED_PATHS_TTL_MS) void warmRecordedPaths(sessionId);
-      return cached?.paths ?? [];
+      if (cached !== undefined && Date.now() - cached.at < RECORDED_PATHS_TTL_MS) return cached.paths;
+      if (cached === undefined) {
+        // Cold: give the first click a bounded chance to be exact instead of
+        // silently degrading to a joined guess.
+        await Promise.race([warmRecordedPaths(sessionId), new Promise((resolve) => setTimeout(resolve, 1500))]);
+        return recordedPathsCache.get(sessionId)?.paths ?? [];
+      }
+      void warmRecordedPaths(sessionId);
+      return cached.paths;
     }
 
     /** Refresh one session's recorded paths without blocking the caller. */
@@ -2648,13 +2664,21 @@ body[data-ds-dark-theme] .dfp-root {
       // workspace root would point at a file that merely shares the name.
       const homeRelative = requested === '~' || requested.startsWith('~/') || requested.startsWith('~\\');
       const asWritten = homeRelative === true || requested.startsWith('/') || /^[a-zA-Z]:[/\\]/.test(requested);
+      // Belt and braces: a relative "path" is only ever a path when it is a
+      // single run of characters. A phrase with an inner space that merely ends
+      // in a filename is prose, and joining it onto the session folder is how
+      // `/…/plugin/same index.js` gets invented. Refuse it at the door.
+      if (asWritten !== true && /\s/.test(requested) === true) {
+        refuseOpen(sessionId, { kind: 'missing', path: requested, requested, base: cwd ?? null, at: Date.now() });
+        return;
+      }
       // A relative link is answered by the session's own record first: the file
       // a read/write/edit call named is the file the reader means, and its path
       // is already exact. Only when the session never named it does the
       // ordinary workspace-root resolution apply.
       let recorded = null;
       if (asWritten !== true && sessionId !== null && sessionId !== undefined) {
-        recorded = exactRecordedPath(requested, recordedPathsFor(sessionId));
+        recorded = exactRecordedPath(requested, await recordedPathsFor(sessionId));
       }
       if (recorded !== null) trace(sessionState(sessionId), 'link-recorded', { requested, path: recorded });
       const absolute = asWritten === true
