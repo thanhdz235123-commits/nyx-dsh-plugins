@@ -48,6 +48,8 @@ window.__ModuleLoader__.load({
       runtime.version += 1;
       syncDockLayout();
       syncToggleButton();
+      reportDiag('repaint');
+      reportTitle();
       for (const listener of listeners) {
         try {
           listener();
@@ -59,7 +61,7 @@ window.__ModuleLoader__.load({
 
     /** The build this client is. Shown in the footer so it is never a guess
      *  which version a window is running. */
-    const CLIENT_BUILD = '0.4.1';
+    const CLIENT_BUILD = '0.4.2';
 
     let tabSeq = 0;
 
@@ -212,6 +214,87 @@ window.__ModuleLoader__.load({
       const result = apply_(sessionState(sessionId));
       notify();
       return result;
+    }
+
+    /** Everything the panel can see about the window it is running in. */
+    function diagSnapshot(reason) {
+      const root = document.querySelector('.dfp-root');
+      const frame = document.querySelector('[data-shell-overlay]')?.parentElement ?? null;
+      const center = document.querySelector('[class*="centerCol"]');
+      const details = document.querySelector('[class*="detailsCol"]');
+      const box = (el) => {
+        if (el === null) return null;
+        const rect = el.getBoundingClientRect();
+        return { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height) };
+      };
+      return {
+        reason,
+        build: CLIENT_BUILD,
+        at: new Date().toISOString(),
+        viewport: { w: window.innerWidth, h: window.innerHeight, dpr: window.devicePixelRatio },
+        columns: frame === null ? null : [...frame.children].map((child) => Math.round(child.getBoundingClientRect().width)),
+        detailsColumn: box(details),
+        centerColumn: box(center),
+        centerPadding: center === null ? null : getComputedStyle(center).paddingRight,
+        mode: runtime.mode,
+        visible: runtime.visible,
+        owner: runtime.owner,
+        docked: document.body.getAttribute('data-dfp-docked'),
+        dockWidth: runtime.dockWidth,
+        panel: box(root),
+        panelDock: root === null ? null : root.getAttribute('data-dock'),
+        tabs: runtime.owner === null ? null : (sessionStates.get(runtime.owner)?.tabs?.length ?? 0),
+        toggle: document.getElementById('dfp-toggle') === null ? null : document.getElementById('dfp-toggle').textContent
+      };
+    }
+
+    /**
+     * A second, restart-free channel: the window title. Reading a window title
+     * needs no devtools and no host route, so the panel can always say what it
+     * is doing — which build, which mode, how wide, how much it inset the chat.
+     */
+    function reportTitle() {
+      if (typeof document === 'undefined') return;
+      const base = document.title.replace(/ \[dfp:[^\]]*\]$/, '');
+      if (runtime.visible !== true) {
+        if (document.title !== base) document.title = base;
+        return;
+      }
+      const root = document.querySelector('.dfp-root');
+      const center = document.querySelector('[class*="centerCol"]');
+      const details = document.querySelector('[class*="detailsCol"]');
+      const strip = [
+        CLIENT_BUILD,
+        runtime.mode,
+        `w${root === null ? 0 : Math.round(root.getBoundingClientRect().width)}`,
+        `x${root === null ? 0 : Math.round(root.getBoundingClientRect().x)}`,
+        `pad${center === null ? '-' : getComputedStyle(center).paddingRight}`,
+        `col${details === null ? '-' : Math.round(details.getBoundingClientRect().width)}`,
+        `vw${window.innerWidth}`,
+        document.body.getAttribute('data-dfp-docked') === null ? 'nodock' : 'docked'
+      ].join(' ');
+      document.title = `${base} [dfp:${strip}]`;
+    }
+
+    let lastDiagAt = 0;
+    let diagTimer = null;
+
+    /** Send a snapshot, throttled: diagnostics must never cost a frame. */
+    function reportDiag(reason, force) {
+      const now = Date.now();
+      if (force !== true && now - lastDiagAt < 1500) return;
+      lastDiagAt = now;
+      if (diagTimer !== null) window.clearTimeout(diagTimer);
+      diagTimer = window.setTimeout(() => {
+        diagTimer = null;
+        let snapshot = null;
+        try {
+          snapshot = diagSnapshot(reason);
+        } catch {
+          return;
+        }
+        void postHost('diag', snapshot).catch(() => {});
+      }, 250);
     }
 
     /** Publish the docked state to the document so the layout can make room. */
@@ -2746,6 +2829,12 @@ body[data-dfp-docked="1"] .dfp-toggle { right: var(--dfp-dock-width, 420px); opa
         }
       };
       console.log(`[dsh-file-panel] ready ${CLIENT_BUILD}`, { wrapped, primitives: primitives !== null });
+      // Announce arrival and then keep reporting while the panel is on screen.
+      reportDiag('loaded', true);
+      window.setTimeout(() => reportDiag('settled', true), 2500);
+      window.setInterval(() => {
+        if (runtime.visible === true) reportDiag('heartbeat', true);
+      }, 15000);
     }
 
     const inject = ['slots', 'sessions', 'layout', 'remote', 'remote.session'];

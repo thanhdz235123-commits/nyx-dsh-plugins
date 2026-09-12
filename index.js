@@ -18,7 +18,7 @@ import zlib from 'node:zlib'
 
 export const name = 'dsh-file-panel'
 /** Bumped per host revision; the health route reports it so a reload is provable. */
-export const BUILD = '0.4.1'
+export const BUILD = '0.4.2'
 export const inject = ['connection']
 
 const ROUTE_FILE = '/api/dsh-file-panel.file'
@@ -26,6 +26,7 @@ const ROUTE_TREE = '/api/dsh-file-panel.tree'
 const ROUTE_CHANGES = '/api/dsh-file-panel.changes'
 const ROUTE_DIFF = '/api/dsh-file-panel.diff'
 const ROUTE_STAT = '/api/dsh-file-panel.stat'
+const ROUTE_DIAG = '/api/dsh-file-panel.diag'
 const ROUTE_WRITE = '/api/dsh-file-panel.write'
 const ROUTE_HEALTH = '/api/dsh-file-panel.health'
 const ROUTE_PROBE = '/api/dsh-file-panel.probe'
@@ -871,6 +872,27 @@ async function handleDiff(request, ctx) {
   })
 }
 
+/**
+ * The panel's black box: the client reports what its window actually looks like
+ * (build, mode, geometry, column widths) and it lands in a file next to the
+ * harness home, so a report from any machine can be read instead of guessed at.
+ * @param {Request} request
+ */
+async function handleDiag(request) {
+  const body = await request.json().catch(() => null)
+  const home = process.env.DSH_HOME
+  if (typeof home !== 'string' || home.length === 0) return ok({ written: false })
+  const file = path.join(home, 'dsh-file-panel-diag.jsonl')
+  const line = `${JSON.stringify({ ...(body ?? {}), receivedAt: new Date().toISOString() })}\n`
+  await fsp.appendFile(file, line).catch(() => {})
+  const stats = await fsp.stat(file).catch(() => null)
+  if (stats !== null && stats.size > 400000) {
+    const kept = (await fsp.readFile(file, 'utf8').catch(() => '')).split('\n').slice(-200).join('\n')
+    await fsp.writeFile(file, kept).catch(() => {})
+  }
+  return ok({ written: true, file })
+}
+
 /** @param {Request} request */
 async function handleStat(request) {
   const url = new URL(request.url)
@@ -1327,6 +1349,7 @@ export function apply(ctx) {
     [ROUTE_CHANGES, ['GET'], guard((request) => handleChanges(request, ctx))],
     [ROUTE_DIFF, ['GET'], guard((request) => handleDiff(request, ctx))],
     [ROUTE_STAT, ['GET'], guard((request) => handleStat(request))],
+    [ROUTE_DIAG, ['POST'], guard((request) => handleDiag(request))],
     [ROUTE_WRITE, ['POST'], guard((request) => handleWrite(request))],
     [ROUTE_HEALTH, ['GET'], guard(() => Promise.resolve(handleHealth(ctx)))],
     [ROUTE_PROBE, ['GET'], guard((request) => handleProbe(request, ctx))],
