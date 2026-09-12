@@ -24,6 +24,8 @@ window.__ModuleLoader__.load({
     const LAYOUT_ROOM_ID = 'dsh-file-panel-room';
     const SEAT_PRIORITY = -1000;
     const POLL_INTERVAL_MS = 2000;
+    /** The narrowest conversation the panel is willing to leave behind. */
+    const CHAT_FLOOR = 560;
     const MAX_TABS = 12;
     const MARKDOWN_LABELS = { code: { copyLabel: 'Copy', copiedLabel: 'Copied' }, footnotes: 'Footnotes' };
     const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.avif', '.bmp', '.ico', '.pdf'];
@@ -1881,14 +1883,19 @@ body[data-ds-dark-theme] .dfp-root {
     }
 
     /**
-     * Inset the conversation only when it can afford it: the chat keeps at least
-     * 700px of content, otherwise the panel floats over the edge instead of
-     * squeezing the chat into a column.
+     * Inset the conversation while the panel is up, so the panel never sits on
+     * top of a message. The question used to be "may I take the room?" with a
+     * 700px floor, which answered "no" on a 1295px window — and a panel that was
+     * told no covered the chat instead. The floor is now what a readable chat
+     * actually needs (560px); when even that is impossible the panel falls back
+     * to floating over the edge, because a squeezed chat is worse than a covered
+     * one only up to that point.
      */
     function pushWidth() {
       const dock = Math.min(clampDockWidth(runtime.dockWidth), defaultDockWidth());
       const center = centerColumnWidth();
-      return center - dock >= 700 ? dock : 0;
+      const wanted = Math.min(dock, Math.max(300, center - CHAT_FLOOR));
+      return center - wanted >= CHAT_FLOOR ? wanted : 0;
     }
 
     /** Sidebar width as the layout resolved it (rail width when collapsed). */
@@ -2198,6 +2205,8 @@ body[data-ds-dark-theme] .dfp-root {
     const PATH_BREAK = /[\s"'`<>|()[\]{}]/;
     const PATH_MARK_INTERVAL_MS = 1200;
     const PATH_MARK_LIMIT = 1200;
+    /** Last labels that mean "this is a hostname, not a file". */
+    const HOST_LABELS = new Set(['com', 'net', 'org', 'io', 'dev', 'co', 'edu', 'gov', 'app', 'xyz', 'info', 'biz', 'me', 'ai', 'so', 'to']);
 
     /** A token worth trying: absolute, home-relative, or carrying an extension. */
     function looksLikePath(value) {
@@ -2206,8 +2215,20 @@ body[data-ds-dark-theme] .dfp-root {
       if (/^[a-z][a-z0-9+.-]*:\/\//i.test(text)) return false;
       if (/^\d+([.,]\d+)?[/\\]\d+([.,]\d+)?$/.test(text)) return false;
       if (/\s{2,}/.test(text) === true) return false;
+      // Selectors, interpolations and shell noise are not doors.
+      if (/^[#!@$%^&*+=]/.test(text) === true) return false;
+      if (/^\.($|[^/\\])/.test(text) === true) return false;
       const absolute = /^([/\\]|~|[a-zA-Z]:[/\\])/.test(text);
-      const last = text.split(/[/\\]/).filter((part) => part.length > 0).pop() ?? '';
+      const segments = text.split(/[/\\]/).filter((part) => part.length > 0);
+      const head = segments[0] ?? '';
+      if (head.includes('.') === true) {
+        // A dotted first segment is either a filename or a hostname, never a
+        // directory in somebody's head: `space.bilibili.com` is not a file.
+        const labels = head.split('.');
+        if (labels.length > 2) return false;
+        if (labels.length === 2 && HOST_LABELS.has(labels[1].toLowerCase()) === true) return false;
+      }
+      const last = segments.pop() ?? '';
       if (last.length === 0) return false;
       if (absolute === true) return true;
       return /\.[a-z0-9]{1,8}$/i.test(last);
