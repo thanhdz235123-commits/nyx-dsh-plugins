@@ -36,6 +36,7 @@ const ROUTE_SEARCH = '/api/dsh-file-panel.search'
 const ROUTE_REVERT = '/api/dsh-file-panel.revert'
 const ROUTE_RESOLVE = '/api/dsh-file-panel.resolve'
 const ROUTE_REFERENCES = '/api/dsh-file-panel.references'
+const ROUTE_LOCATE = '/api/dsh-file-panel.locate'
 
 const MAX_INLINE_BYTES = 1_500_000
 const MAX_RAW_BYTES = 12 * 1024 * 1024
@@ -959,6 +960,14 @@ function recordedPaths(events) {
  * @param ctx - host plugin context.
  * @param request - GET /api/dsh-file-panel.references?sessionId=…
  */
+async function sessionEventsFor(ctx, sessionId) {
+  if (sessionId === '') return { events: [], source: 'none' }
+  const live = liveSessionEvents(ctx, sessionId)
+  if (live !== null) return { events: live, source: 'live' }
+  const events = await loadSessionEventsFromQuery(ctx, sessionId)
+  return { events, source: events.length > 0 ? 'query' : 'none' }
+}
+
 async function handleReferences(ctx, request) {
   const url = new URL(request.url)
   const sessionId = url.searchParams.get('sessionId') ?? ''
@@ -1001,6 +1010,111 @@ function liveSessionEvents(ctx, sessionId) {
   } catch {
     return null
   }
+}
+
+/** Does this absolute path exist right now? */
+async function statOrNull(absolute) {
+  try {
+    const stats = await fsp.stat(absolute)
+    return { path: absolute, size: stats.size, mtimeMs: stats.mtimeMs, isDirectory: stats.isDirectory() }
+  } catch {
+    return null
+  }
+}
+
+/** Lexical comparison form: separators unified, `.` / `..` folded. */
+function comparablePath(value) {
+  const unified = String(value ?? '').replace(/\\/g, '/')
+  const parts = []
+  for (const part of unified.split('/')) {
+    if (part === '' || part === '.') continue
+    if (part === '..') {
+      parts.pop()
+      continue
+    }
+    parts.push(part)
+  }
+  return `/${parts.join('/')}`
+}
+
+/**
+ * The one place a click's token becomes a path.
+ *
+ * The panel does not guess: it asks here, and this answers with either a single
+ * file the evidence supports, a short list of files that share the name, or a
+ * refusal. Evidence, in order:
+ *
+ *   1. an absolute path, a `~` path, or an explicit `./` / `../` step — taken as written;
+ *   2. the session's own record of paths its read/write/edit calls used;
+ *   3. the workspace root.
+ *
+ * A name that several recorded files share is never resolved by picking one —
+ * the answer is the list, and the reader decides.
+ *
+ * @param ctx - host plugin context.
+ * @param request - GET /api/dsh-file-panel.locate?sessionId=…&cwd=…&token=…
+ */
+async function handleLocate(ctx, request) {
+  const url = new URL(request.url)
+  const sessionId = url.searchParams.get('sessionId') ?? ''
+  const cwd = url.searchParams.get('cwd') ?? ''
+  const token = url.searchParams.get('token') ?? ''
+  if (token === '') return ok({ kind: 'missing', requested: token, base: cwd === '' ? null : cwd, path: token })
+
+  const asWritten = /^([/\\]|~|[a-zA-Z]:[/\\])/.test(token)
+  if (asWritten === true) {
+    const absolute = resolveRequestPath(token, cwd === '' ? null : cwd)
+    const stats = await statOrNull(absolute)
+    return stats === null
+      ? ok({ kind: 'missing', requested: token, base: cwd === '' ? null : cwd, path: absolute, source: 'as-written' })
+      : ok({ kind: 'open', requested: token, base: cwd === '' ? null : cwd, ...stats, source: 'as-written' })
+  }
+
+  // A relative token is only a path when it is one run of characters. A phrase
+  // that merely ends in a filename ("same index.js") is prose, and joining it
+  // onto a folder is how `/…/plugin/same index.js` gets invented.
+  if (/\s/.test(token) === true && /^(\.\.?[/\\])/.test(token) !== true) {
+    return ok({ kind: 'not-a-path', requested: token, base: cwd === '' ? null : cwd })
+  }
+
+  const wanted = comparablePath(token)
+  const base = wanted.split('/').pop() ?? ''
+  const sessionEvents = await sessionEventsFor(ctx, sessionId)
+  const recorded = sessionId === '' ? [] : recordedPaths(sessionEvents.events)
+  const seen = new Set()
+  const candidates = []
+  const consider = (candidate) => {
+    const key = comparablePath(candidate)
+    if (key === '' || seen.has(key)) return
+    seen.add(key)
+    candidates.push({ path: candidate, canonical: key })
+  }
+  for (const candidate of recorded) {
+    const canonical = comparablePath(candidate)
+    if (canonical === wanted || canonical.endsWith(`${wanted}`)) consider(candidate)
+  }
+  for (const candidate of recorded) {
+    const tail = comparablePath(candidate).split('/').pop()
+    if (tail === base) consider(candidate)
+  }
+
+  const existing = []
+  for (const candidate of candidates) {
+    const stats = await statOrNull(candidate.path)
+    if (stats !== null) existing.push(stats)
+  }
+  if (existing.length === 1) return ok({ kind: 'open', requested: token, base: cwd === '' ? null : cwd, ...existing[0], source: 'session-record' })
+  if (existing.length > 1) {
+    const exactSuffix = existing.filter((entry) => comparablePath(entry.path).endsWith(wanted))
+    if (exactSuffix.length === 1) return ok({ kind: 'open', requested: token, base: cwd === '' ? null : cwd, ...exactSuffix[0], source: 'session-record' })
+    return ok({ kind: 'choose', requested: token, base: cwd === '' ? null : cwd, options: (exactSuffix.length > 0 ? exactSuffix : existing).map((entry) => entry.path), source: 'session-record' })
+  }
+
+  const joined = resolveRequestPath(token, cwd === '' ? null : cwd)
+  const stats = await statOrNull(joined)
+  return stats === null
+    ? ok({ kind: 'missing', requested: token, base: cwd === '' ? null : cwd, path: joined, source: 'workspace-root' })
+    : ok({ kind: 'open', requested: token, base: cwd === '' ? null : cwd, ...stats, source: 'workspace-root' })
 }
 
 /** @param {Request} request */
@@ -1468,6 +1582,7 @@ export function apply(ctx) {
     [ROUTE_REVERT, ['POST'], guard((request) => handleRevert(request))],
     [ROUTE_RESOLVE, ['GET'], guard((request) => handleResolve(request, ctx))],
     [ROUTE_REFERENCES, ['GET'], guard((request) => handleReferences(ctx, request))],
+    [ROUTE_LOCATE, ['GET'], guard((request) => handleLocate(ctx, request))],
   ]
   for (const [routePath, methods, fetch] of routes) {
     connection.fetch.register({ path: routePath, methods, fetch })

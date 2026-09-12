@@ -458,6 +458,16 @@ window.__ModuleLoader__.load({
 .dfp-body { flex:1; min-height:0; overflow:auto; padding:8px 10px 12px; display:flex; flex-direction:column; gap:8px; }
 .dfp-note { font-size:12px; color:var(--dsw-alias-label-secondary, inherit); background:var(--dsw-alias-bg-module-platform, rgba(128,128,128,.12)); border-radius:8px; padding:8px 10px; }
 .dfp-note[data-tone="error"] { color:var(--dsw-alias-state-error-primary,#e5484d); }
+.dfp-note[data-kind="choose"] .dfp-error-title { color:var(--dsw-alias-label-primary,inherit); }
+.dfp-choices { margin:6px 0 0; padding:0; list-style:none; display:flex; flex-direction:column; gap:2px; }
+.dfp-choice {
+  box-sizing:border-box; width:100%; text-align:left; cursor:pointer;
+  border:.5px solid var(--dsw-alias-border-l1,#303036); background:transparent;
+  color:var(--dsw-alias-label-primary,inherit); border-radius:6px; padding:4px 8px;
+  font-family:var(--ds-font-family-code,monospace); font-size:11.5px; line-height:16px;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.dfp-choice:hover { background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.18)); }
 .dfp-error-title { font-weight:600; margin-bottom:2px; }
 .dfp-note[data-tone="warn"] { color:var(--dsw-alias-state-warn-primary,#f5a623); }
 .dfp-stats { display:flex; align-items:center; gap:8px; font-size:11px; color:var(--dsw-alias-label-secondary, inherit); flex-wrap:wrap; }
@@ -1609,6 +1619,24 @@ body[data-ds-dark-theme] .dfp-root {
     function OpenNotice({ state, sessionId }) {
       const notice = state.notice;
       if (notice === null) return null;
+      if (notice.kind === 'choose') {
+        return React.createElement('div', { className: 'dfp-note', 'data-tone': 'info', 'data-kind': 'choose' },
+          React.createElement('div', { className: 'dfp-error-title' }, `${notice.options.length} files share the name “${notice.requested}”`),
+          React.createElement('ul', { className: 'dfp-choices' }, notice.options.map((option) =>
+            React.createElement('li', { key: option },
+              React.createElement('button', {
+                type: 'button',
+                className: 'dfp-choice',
+                title: option,
+                onClick: () => void openFile(sessionId, option, { cwd: notice.base ?? undefined })
+              }, option)))),
+          React.createElement('div', { className: 'dfp-sub' }, 'Nothing was opened: pick the file you meant.'),
+          React.createElement('div', { className: 'dfp-stats' },
+            React.createElement('button', {
+              type: 'button', className: 'dfp-btn',
+              onClick: () => mutate(sessionId, (s) => { s.notice = null })
+            }, 'Dismiss')));
+      }
       return React.createElement('div', { className: 'dfp-note', 'data-tone': 'error', 'data-kind': 'refused' },
         React.createElement('div', { className: 'dfp-error-title' }, 'Not opened — that path is not on disk'),
         React.createElement('div', {
@@ -2469,6 +2497,15 @@ body[data-ds-dark-theme] .dfp-root {
      * confirms right now. A stale link, a typo, a path somebody invented — none
      * of them can put content on screen, because none of them get a tab.
      */
+    /** Several real files share the clicked name: the reader picks, never the panel. */
+    function chooseOpen(sessionId, notice) {
+      mutate(sessionId, (state) => {
+        state.pending = null;
+        state.notice = notice;
+        trace(state, 'choose', notice);
+      });
+    }
+
     function refuseOpen(sessionId, notice) {
       mutate(sessionId, (state) => {
         state.pending = null;
@@ -2659,31 +2696,41 @@ body[data-ds-dark-theme] .dfp-root {
       const cwd = options?.cwd ?? facts.cwd;
       const requested = lexicalNormalize(String(rawPath ?? '').trim());
       if (requested.length === 0) return;
-      // A path that starts at home is handed to the host exactly as it was
-      // written: only the host knows where home is, and joining it to the
-      // workspace root would point at a file that merely shares the name.
-      const homeRelative = requested === '~' || requested.startsWith('~/') || requested.startsWith('~\\');
-      const asWritten = homeRelative === true || requested.startsWith('/') || /^[a-zA-Z]:[/\\]/.test(requested);
-      // Belt and braces: a relative "path" is only ever a path when it is a
-      // single run of characters. A phrase with an inner space that merely ends
-      // in a filename is prose, and joining it onto the session folder is how
-      // `/…/plugin/same index.js` gets invented. Refuse it at the door.
-      if (asWritten !== true && /\s/.test(requested) === true) {
+
+      // One resolver decides what this token is. It owns every rule about
+      // absolute forms, the session's own file record, and the workspace root;
+      // the panel only reports what it answered, so no join or guess lives here.
+      const located = await callHost('locate', { sessionId, cwd, token: requested }).catch(() => null);
+      if (located === null) {
         refuseOpen(sessionId, { kind: 'missing', path: requested, requested, base: cwd ?? null, at: Date.now() });
         return;
       }
-      // A relative link is answered by the session's own record first: the file
-      // a read/write/edit call named is the file the reader means, and its path
-      // is already exact. Only when the session never named it does the
-      // ordinary workspace-root resolution apply.
-      let recorded = null;
-      if (asWritten !== true && sessionId !== null && sessionId !== undefined) {
-        recorded = exactRecordedPath(requested, await recordedPathsFor(sessionId));
+      if (located.kind === 'not-a-path') return;
+      const resolvedPath = typeof located.path === 'string' && located.path.length > 0 ? nativePath(located.path) : requested;
+      if (located.kind !== 'open') {
+        if (located.kind === 'choose') {
+          const options = (Array.isArray(located.options) ? located.options : []).map((entry) => nativePath(entry));
+          if (options.length > 1) {
+            runtime.visible = true;
+            if (runtime.dockWidth > defaultDockWidth()) runtime.dockWidth = defaultDockWidth();
+            applyPanelHost(ctx, sessionId);
+            mutate(sessionId, (state) => { state.cwd = cwd });
+            chooseOpen(sessionId, { kind: 'choose', requested, base: cwd ?? null, options, at: Date.now() });
+            return;
+          }
+          if (options.length === 1) {
+            await openFile(sessionId, options[0], { cwd });
+            return;
+          }
+        }
+        runtime.visible = true;
+        if (runtime.dockWidth > defaultDockWidth()) runtime.dockWidth = defaultDockWidth();
+        applyPanelHost(ctx, sessionId);
+        mutate(sessionId, (state) => { state.cwd = cwd });
+        refuseOpen(sessionId, { kind: 'missing', path: resolvedPath, requested, base: cwd ?? null, at: Date.now() });
+        return;
       }
-      if (recorded !== null) trace(sessionState(sessionId), 'link-recorded', { requested, path: recorded });
-      const absolute = asWritten === true
-        ? (homeRelative === true ? requested : nativePath(requested))
-        : nativePath(recorded ?? (typeof cwd === 'string' && cwd.length > 0 ? `${cwd.replace(/[/\\]+$/, '')}/${requested}` : requested));
+      const absolute = resolvedPath;
 
       runtime.visible = true;
       if (runtime.dockWidth > defaultDockWidth()) runtime.dockWidth = defaultDockWidth();
