@@ -65,7 +65,7 @@ window.__ModuleLoader__.load({
 
     /** The build this client is. Shown in the footer so it is never a guess
      *  which version a window is running. */
-    const CLIENT_BUILD = '0.6.1';
+    const CLIENT_BUILD = '0.6.2';
 
     let tabSeq = 0;
 
@@ -2822,38 +2822,33 @@ body[data-ds-dark-theme] .dfp-root {
       const sessionId = currentSessionId(ctx);
       if (sessionId === null || sessionId === undefined) { chatEditSetStatus('Không xác định được phiên'); return }
       chatEditBusy = true;
-      chatEditSetStatus('Đang tạo nhánh…');
+      chatEditSetStatus('Đang sửa tại chỗ…');
       try {
-        let targetSession = sessionId;
-        if (target.forkAt !== null) {
-          const childId = await ctx.sessions.fork({ sessionId, atSeq: target.forkAt, increaseTitle: true });
-          if (typeof childId !== 'string' || childId.length === 0) throw new Error('fork không trả về phiên mới');
-          targetSession = childId;
-        } else {
-          const created = await ctx.sessions.create({ cwd: target.cwd });
-          targetSession = typeof created === 'string' ? created : created?.sessionId ?? created?.id ?? null;
-          if (typeof targetSession !== 'string' || targetSession.length === 0) throw new Error('không tạo được phiên mới');
+        // In place: the host rewrites the surface so this message replaces
+        // itself and everything after it, then DSH's own prompt path sends the
+        // edited text, and the copy that path appends is folded away again.
+        const applied = await postHost('edit', { sessionId, seq: target.seq, text }).catch((error) => ({ __error: String(error?.message ?? error) }));
+        if (applied?.replaced !== true) {
+          const send = chatEditSendHook ?? ((session, payload) => session.prompt(payload, CHAT_EDIT_PROMPT_MODE));
+          const binding = await waitForBinding(ctx, sessionId, 8000);
+          if (binding === null) throw new Error('phiên chưa sẵn sàng');
+          const result = await send(binding.session, [{ type: 'text', text }]);
+          if (result?.ok === false) throw new Error(result?.error?.message ?? 'prompt bị từ chối');
+          chatEditSetStatus('Đã gửi (không sửa tại chỗ được: host từ chối)');
+          closeChatEditor();
+          return;
         }
-        reportChatEdit('forked', { seq: target.seq, forkAt: target.forkAt, child: targetSession });
-        ctx.sessions.open(targetSession);
-        const binding = await waitForBinding(ctx, targetSession, 8000);
-        if (binding === null) throw new Error('phiên mới chưa sẵn sàng');
-        chatEditSetStatus('Đang gửi…');
+        reportChatEdit('in-place', { seq: target.seq, shadowed: applied.shadowedCount });
+        chatEditSetStatus('Đang gửi lại…');
+        const binding = await waitForBinding(ctx, sessionId, 8000);
+        if (binding === null) throw new Error('phiên chưa sẵn sàng');
         const send = chatEditSendHook ?? ((session, payload) => session.prompt(payload, CHAT_EDIT_PROMPT_MODE));
         const result = await send(binding.session, [{ type: 'text', text }]);
         if (result?.ok === false) throw new Error(result?.error?.message ?? 'prompt bị từ chối');
-        const familyId = recordVersion(
-          { sessionId, turn: target.turn },
-          targetSession,
-          target.turn,
-          target.text,
-          text,
-          target.familyId ?? null
-        );
-        chatEditSetStatus('Đã gửi · dùng ‹ › dưới tin nhắn để đổi bản');
-        reportChatEdit('sent', { seq: target.seq, child: targetSession, chars: text.length, family: familyId });
+        void postHost('edit-settle', { sessionId, tag: applied.tag, text }).catch(() => {});
+        chatEditSetStatus('Đã sửa tại chỗ');
+        reportChatEdit('sent', { seq: target.seq, inPlace: true, chars: text.length });
         closeChatEditor();
-        window.setTimeout(() => placeVersionChips(), 800);
       } catch (error) {
         chatEditSetStatus(`Không gửi được: ${error?.message ?? error}`);
         reportChatEdit('failed', { seq: target.seq, message: String(error?.message ?? error).slice(0, 200) });

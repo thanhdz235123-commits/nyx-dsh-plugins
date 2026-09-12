@@ -19,7 +19,7 @@ import zlib from 'node:zlib'
 
 export const name = 'dsh-file-panel'
 /** Bumped per host revision; the health route reports it so a reload is provable. */
-export const BUILD = '0.6.1'
+export const BUILD = '0.6.2'
 export const inject = ['connection']
 
 const ROUTE_FILE = '/api/dsh-file-panel.file'
@@ -36,6 +36,8 @@ const ROUTE_SEARCH = '/api/dsh-file-panel.search'
 const ROUTE_REVERT = '/api/dsh-file-panel.revert'
 const ROUTE_RESOLVE = '/api/dsh-file-panel.resolve'
 const ROUTE_CHAT = '/api/dsh-file-panel.chat'
+const ROUTE_EDIT = '/api/dsh-file-panel.edit'
+const ROUTE_EDIT_SETTLE = '/api/dsh-file-panel.edit-settle'
 
 const MAX_INLINE_BYTES = 1_500_000
 const MAX_RAW_BYTES = 12 * 1024 * 1024
@@ -1169,6 +1171,116 @@ async function searchFileContents(root, query, limit) {
  * of a dead end.
  * @param {Request} request @param {import('@deepseek-ai/cordis').Context} ctx
  */
+/** Only these three types ever join the session's model-visible surface. */
+const SURFACE_EVENT_TYPES = new Set(['user/message', 'assistant/message', 'tool/result'])
+
+/**
+ * The session's current surface, in order — the same fold DSH itself runs
+ * (`foldSurface`): every `user/message`, `assistant/message` and `tool/result`
+ * that appended, with replaced ranges collapsed onto their replacement.
+ * @param {unknown[]} events
+ * @returns {number[]}
+ */
+function foldSurfaceSeqs(events) {
+  const nodes = []
+  for (const event of events) {
+    const type = event?.type
+    if (SURFACE_EVENT_TYPES.has(type) !== true) continue
+    const op = event.surfaceOp
+    if (op === 'append') { nodes.push(event.seq); continue }
+    if (op !== null && typeof op === 'object' && op.op === 'replace') {
+      const startIdx = nodes.indexOf(op.start)
+      const endIdx = nodes.indexOf(op.end)
+      if (startIdx === -1 || endIdx === -1 || startIdx > endIdx) continue
+      nodes.splice(startIdx, endIdx - startIdx + 1, event.seq)
+    }
+  }
+  return nodes
+}
+
+/** A user message in the shape the session log stores. */
+function editMessage(text, tag) {
+  return {
+    content: [{ type: 'text', text }],
+    source: { kind: 'user', rpcId: tag },
+    role: 'user',
+    id: tag
+  }
+}
+
+/**
+ * Rewrite one user message in place: append it again as a *replacement* of the
+ * surface range that starts at that message and runs to the end of the
+ * conversation, so everything after it (its answer and every later turn) stops
+ * being part of the conversation. This is the mechanism DSH's own compaction
+ * uses; nothing is deleted from the log, the range is shadowed.
+ * @param {unknown} ctx @param {{sessionId?: unknown, seq?: unknown, text?: unknown}} body
+ */
+async function handleEdit(ctx, body) {
+  const sessionId = typeof body.sessionId === 'string' ? body.sessionId : ''
+  const text = typeof body.text === 'string' ? body.text : ''
+  const seq = Number(body.seq)
+  if (sessionId.length === 0 || text.length === 0 || Number.isSafeInteger(seq) !== true) throw failure2('bad-request', 'sessionId, seq and text are required')
+  const events = await loadSessionEventsFromQuery(ctx, sessionId, () => {})
+  if (events.length === 0) throw failure2('not-found', `session "${sessionId}" has no readable log`)
+  const target = events.find((event) => event.seq === seq)
+  if (target === undefined || target.type !== 'user/message') throw failure2('bad-request', `seq ${seq} is not a user message`)
+  const nodes = foldSurfaceSeqs(events)
+  const startIdx = nodes.indexOf(seq)
+  if (startIdx === -1) throw failure2('bad-request', `seq ${seq} is no longer on the session surface`)
+  const shadowed = nodes.slice(startIdx)
+  const agent = ctx.get?.("agents")?.get?.(sessionId)
+  const session = agent?.session
+  if (session?.append === undefined) throw failure2('conflict', 'session is not live in this harness')
+  const tag = `panel-edit-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+  session.append('user/message', editMessage(text, tag), {
+    surfaceOp: { op: 'replace', start: shadowed[0], end: shadowed[shadowed.length - 1] },
+    sourceEventSeqs: [...shadowed]
+  })
+  return ok({ replaced: true, shadowedCount: shadowed.length, shadowedFrom: shadowed[0], shadowedTo: shadowed[shadowed.length - 1], tag })
+}
+
+/**
+ * Collapse the copy the prompt appended onto the replacement it was sent for,
+ * so the conversation shows the edited message once. The prompt path is DSH's
+ * own (it always appends a user message to start a turn), so the copy is folded
+ * away instead of being avoided.
+ * @param {unknown} ctx @param {{sessionId?: unknown, tag?: unknown, text?: unknown}} body
+ */
+async function handleEditSettle(ctx, body) {
+  const sessionId = typeof body.sessionId === 'string' ? body.sessionId : ''
+  const tag = typeof body.tag === 'string' ? body.tag : ''
+  const text = typeof body.text === 'string' ? body.text : ''
+  if (sessionId.length === 0 || tag.length === 0 || text.length === 0) throw failure2('bad-request', 'sessionId, tag and text are required')
+  let events = []
+  let nodes = []
+  let copySeq = null
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    events = await loadSessionEventsFromQuery(ctx, sessionId, () => {})
+    nodes = foldSurfaceSeqs(events)
+    const last = nodes[nodes.length - 1]
+    const lastEvent = events.find((event) => event.seq === last)
+    const earlier = nodes[nodes.length - 2]
+    const earlierEvent = events.find((event) => event.seq === earlier)
+    if (lastEvent?.type === 'user/message' && earlierEvent?.type === 'user/message' && lastEvent.seq !== earlierEvent.seq) {
+      copySeq = last
+      break
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+  if (copySeq === null) throw failure2('conflict', 'the sent message never reached the surface')
+  const replacementSeq = nodes[nodes.length - 2]
+  const agent = ctx.get?.("agents")?.get?.(sessionId)
+  const session = agent?.session
+  if (session?.append === undefined) throw failure2('conflict', 'session is not live in this harness')
+  const settleTag = `${tag}-settle`
+  session.append('user/message', editMessage(text, settleTag), {
+    surfaceOp: { op: 'replace', start: replacementSeq, end: copySeq },
+    sourceEventSeqs: [replacementSeq, copySeq]
+  })
+  return ok({ settled: true, collapsed: [replacementSeq, copySeq], tag: settleTag })
+}
+
 /** Log event types that carry a user turn, across harness revisions. */
 const USER_MESSAGE_TYPES = new Set(['user/message', 'message/user', 'input-message', 'user-message', 'prompt/user'])
 
@@ -1414,7 +1526,9 @@ export function apply(ctx) {
     [ROUTE_SEARCH, ['GET'], guard((request) => handleSearch(request))],
     [ROUTE_REVERT, ['POST'], guard((request) => handleRevert(request))],
     [ROUTE_RESOLVE, ['GET'], guard((request) => handleResolve(request, ctx))],
-    [ROUTE_CHAT, ['GET'], guard((request) => handleChat(ctx, new URL(request.url).searchParams.get('sessionId') ?? ''))]
+    [ROUTE_CHAT, ['GET'], guard((request) => handleChat(ctx, new URL(request.url).searchParams.get('sessionId') ?? ''))],
+    [ROUTE_EDIT, ['POST'], guard(async (request) => handleEdit(ctx, await request.json().catch(() => ({}))))],
+    [ROUTE_EDIT_SETTLE, ['POST'], guard(async (request) => handleEditSettle(ctx, await request.json().catch(() => ({}))))]
   ]
   for (const [routePath, methods, fetch] of routes) {
     connection.fetch.register({ path: routePath, methods, fetch })
