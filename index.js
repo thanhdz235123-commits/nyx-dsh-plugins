@@ -199,7 +199,9 @@ function commitEdit(session, edit) {
   const message = {
     id: randomUUID(),
     role: 'user',
-    content: rebuildContent(original.content, edit.text),
+    // A composer-driven edit owns the whole content list (text plus the images
+    // still attached there); a plain text edit keeps every non-text block.
+    content: Array.isArray(edit.content) ? edit.content : rebuildContent(original.content, edit.text),
     source: {
       kind: 'user',
       rpcId: edit.rpcId,
@@ -232,6 +234,41 @@ function commitEdit(session, edit) {
     hiddenKeys,
     hiddenTurns: [...hiddenTurns].sort((left, right) => left - right)
   }
+}
+
+/**
+ * Admit browser image uploads through the deployment's own attachment store.
+ *
+ * The composer hands the plugin the same canonical base64 wire form it hands
+ * the host, so admission reuses the store's batch policy (count, aggregate
+ * bytes, media types) instead of inventing a second image path.
+ *
+ * @param ctx - host plugin context.
+ * @param images - `{ mediaType, data, name? }` entries in composer order.
+ * @returns core image blocks carrying durable attachment references.
+ */
+async function admitImages(ctx, images) {
+  if (!Array.isArray(images) || images.length === 0) return []
+  const attachments = ctx.get('attachments')
+  if (attachments?.saveImages === undefined) {
+    throw coded('unsupported', 'Dịch vụ attachment không khả dụng nên chưa nhận được ảnh.')
+  }
+  const inputs = images.map((image) => {
+    if (typeof image?.mediaType !== 'string' || typeof image?.data !== 'string' || image.data === '') {
+      throw coded('bad-request', 'Mỗi ảnh phải có mediaType và data base64.')
+    }
+    const decoded = Buffer.from(image.data, 'base64')
+    if (decoded.length === 0 || decoded.toString('base64') !== image.data) {
+      throw coded('bad-request', 'Ảnh không phải base64 hợp lệ.')
+    }
+    return {
+      data: new Uint8Array(decoded),
+      mediaType: image.mediaType,
+      ...(typeof image.name === 'string' && image.name !== '' ? { name: image.name } : {})
+    }
+  })
+  const refs = await attachments.saveImages(inputs)
+  return refs.map((ref) => ({ type: 'image', attachment: ref }))
 }
 
 // ---------------------------------------------------------------------------
@@ -372,10 +409,14 @@ async function handleState(ctx, request) {
     const event = session.eventAt(seq)
     if (event?.type !== 'user/message') continue
     if (event.data?.source?.kind !== 'user') continue
+    const images = (Array.isArray(event.data.content) ? event.data.content : [])
+      .filter((block) => block?.type === 'image' && block.attachment !== undefined)
+      .map((block) => block.attachment)
     messages.push({
       id: event.data.id,
       seq: event.seq,
       text: messageText(event.data.content),
+      images,
       editable: event.data?.source?.editOf === undefined || typeof event.data.source.editOf === 'string',
       editOf: typeof event.data?.source?.editOf === 'string' ? event.data.source.editOf : null
     })
@@ -400,16 +441,23 @@ async function handleEdit(ctx, request) {
   if (body === null || typeof body !== 'object') throw coded('bad-request', 'a JSON body is required')
   const sessionId = typeof body.sessionId === 'string' ? body.sessionId : ''
   const messageId = typeof body.messageId === 'string' ? body.messageId : ''
-  const text = typeof body.text === 'string' ? body.text : undefined
+  const text = typeof body.text === 'string' ? body.text : ''
+  const composerDriven = Array.isArray(body.images)
   if (messageId === '') throw coded('bad-request', 'messageId is required')
-  if (text === undefined) throw coded('bad-request', 'text is required')
   const agent = resolveAgent(ctx, sessionId)
   const session = agent.session
   const located = locateSurfaceMessage(session, messageId)
   if (located === undefined) throw coded('not-found', 'Tin nhắn này không còn nằm trong hội thoại đang hoạt động.')
   const keptBlocks = (Array.isArray(located.event.data.content) ? located.event.data.content : []).filter((block) => block?.type !== 'text')
-  if (text === '' && keptBlocks.length === 0) throw coded('bad-request', 'Tin nhắn không được để trống.')
-  if (messageText(located.event.data.content) === text && pendingEdits.has(sessionId) === false) {
+  let content
+  if (composerDriven === true) {
+    const imageBlocks = await admitImages(ctx, body.images)
+    content = [...imageBlocks, ...(text === '' ? [] : [{ type: 'text', text }])]
+    if (content.length === 0) throw coded('bad-request', 'Tin nhắn không được để trống.')
+  } else if (text === '' && keptBlocks.length === 0) {
+    throw coded('bad-request', 'Tin nhắn không được để trống.')
+  }
+  if (composerDriven !== true && messageText(located.event.data.content) === text && pendingEdits.has(sessionId) === false) {
     return ok({ changed: false, reason: 'identical' })
   }
   if (pendingEdits.has(sessionId)) throw coded('busy', 'Đang có một lần sửa khác chạy trên phiên này.')
@@ -436,6 +484,7 @@ async function handleEdit(ctx, request) {
       timer,
       messageId,
       text,
+      ...(content === undefined ? {} : { content }),
       rpcId: typeof body.requestId === 'string' && body.requestId !== '' ? body.requestId : randomUUID(),
       requested
     })
