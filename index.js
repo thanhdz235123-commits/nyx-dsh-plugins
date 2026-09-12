@@ -12,7 +12,8 @@
 import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { createReadStream, existsSync, readdirSync, promises as fsp } from 'node:fs'
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
+import { StringDecoder } from 'node:string_decoder'
 import os from 'node:os'
 import path from 'node:path'
 import zlib from 'node:zlib'
@@ -253,9 +254,25 @@ let liveSubscription = false
 /** Sessions the query service refused (a torn frame fails its whole-log validation). */
 const queryRefusalCache = new Map()
 const QUERY_REFUSAL_TTL_MS = 30_000
-const MAX_LOG_TAIL_BYTES = 48 * 1024 * 1024
+/** The window a cold look walks back from the end of a big log. */
+const TAIL_WINDOW_BYTES = 1024 * 1024
+/** Frames a cold look keeps: enough to paint, few enough to be a blink. */
+const COLD_TAIL_FRAMES = 1200
+/** Above this, a range is worth handing to the `zstd` binary. */
+const CLI_READ_MIN_BYTES = 512 * 1024
+/** Milliseconds the background crawl rests between batches, so a 200k-frame log
+ *  does not hold a core while the reader is doing something else. */
+const CRAWL_PAUSE_MS = 3
 /** Newest frames decoded per cold read: a 200k-frame log costs ~10 ms per 100 frames. */
 const MAX_LOG_TAIL_FRAMES = 6000
+/** A log this small is read whole on the spot: accuracy beats a checkpoint. */
+const SYNC_FULL_READ_BYTES = 2 * 1024 * 1024
+/** Where a session's diff-index checkpoint is kept, and how big it may get. */
+const INDEX_CACHE_DIR = 'dsh-file-panel-index'
+const INDEX_CACHE_VERSION = 1
+const MAX_INDEX_CACHE_BYTES = 4 * 1024 * 1024
+/** Sessions whose partial index is being finished off the click path. */
+const indexCrawls = new Set()
 const FOLD_BATCH_FRAMES = 128
 
 /** Zstandard frame magic (RFC 8878 frames are concatenated in a session log). */
@@ -384,6 +401,9 @@ function decodeZstdFrames(buffer, startOffset = 0) {
  */
 function foldDiffEvent(event, state) {
   if (event?.type !== 'tool/result') return 0
+  // Folding is idempotent: the live event stream and a catch-up pass can hand the
+  // same event over twice, and a hunk counted twice would be a lie.
+  if (typeof event.seq === 'number' && state.lastSeq !== null && event.seq <= state.lastSeq) return 0
   const diffs = event?.data?.meta?.diffs
   if (!Array.isArray(diffs)) return 0
   const index = state.index
@@ -417,11 +437,14 @@ function foldDiffEvent(event, state) {
 function foldDiffRecords(text, state) {
   let folded = 0
   for (const line of text.split('\n')) {
-    const trimmed = line.trim()
-    if (trimmed.length < 24 || !trimmed.includes('"meta"') || !trimmed.includes('"diffs"')) continue
+    // The cheap reject comes first, on the raw line: a cold read is millions of
+    // streaming chunks, and trimming each one before rejecting it was most of a
+    // whole-log scan's cost.
+    if (line.indexOf('"diffs"') === -1) continue
+    if (line.length < 24 || line.indexOf('"meta"') === -1) continue
     let event
     try {
-      event = JSON.parse(trimmed)
+      event = JSON.parse(line)
     } catch {
       continue
     }
@@ -498,35 +521,168 @@ function adoptLiveIndex(sessionId, state) {
 async function diffIndexForSession(sessionId, options = {}) {
   const located = await locateSessionLog(sessionId)
   if (located === null) return null
-  const tailBytes = options.tailBytes ?? MAX_LOG_TAIL_BYTES
-  const state = { index: new Map(), lastSeq: null, frames: 0, bytes: 0, truncated: false, source: 'log' }
-  let start = 0
-  if (located.size > tailBytes) {
-    start = located.size - tailBytes
-    state.truncated = true
+  const state = {
+    index: new Map(),
+    lastSeq: null,
+    frames: 0,
+    bytes: located.size,
+    truncated: false,
+    source: 'log',
+    complete: false
   }
-  const handle = await fsp.open(located.path, 'r')
+  // A log small enough to read whole is read whole: accuracy first, and a few
+  // hundred kilobytes of frames is not worth a checkpoint.
+  const whole = options.whole === true || located.size <= SYNC_FULL_READ_BYTES
+  const pace = options.pace === true
+  const cli = options.cli !== false
+  const cache = whole ? null : await readIndexCache(sessionId)
+
+  let start = 0
+  let plan = { cap: Infinity, keepNewest: false, pace, cli }
+  let pass
+  const seededFromCache = cache !== null && cache.offset > 0 && cache.offset <= located.size
+  if (seededFromCache) {
+    // Continue where the last scan stopped: the frames appended since then are
+    // the only ones that need decoding, which is what makes a revisit a blink.
+    state.index = seedIndexFromFiles(cache.files)
+    state.lastSeq = typeof cache.lastSeq === 'number' ? cache.lastSeq : null
+    start = cache.offset
+    plan = { cap: MAX_LOG_TAIL_FRAMES, keepNewest: false, pace, cli }
+    pass = await foldLogRange(state, located.path, start, located.size, plan)
+  } else if (!whole) {
+    // First look at a log too big to read under a reader's finger: the newest
+    // window of it, and only its newest frames — the way a reader scrolls to the
+    // bottom. The window is what keeps the frame-boundary walk short; the rest is
+    // folded off the click path, and then remembered.
+    plan = { cap: COLD_TAIL_FRAMES, keepNewest: true, pace, cli: false }
+    let window = Math.min(located.size, TAIL_WINDOW_BYTES)
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      start = Math.max(0, located.size - window)
+      pass = await foldLogRange(state, located.path, start, located.size, plan)
+      if (start === 0 || pass.frames >= plan.cap) break
+      window = Math.min(located.size, window * 4)
+    }
+  } else {
+    pass = await foldLogRange(state, located.path, 0, located.size, plan)
+  }
+  // Only a pass that began at the start of the log (or continued a checkpoint)
+  // and reached its end may claim to be complete — and only a complete pass is
+  // worth remembering.
+  state.complete = pass.end >= located.size && (pass.start === 0 || seededFromCache)
+  state.truncated = state.complete !== true
+  if (state.complete) await writeIndexCache(sessionId, state, located.size)
+  return state
+}
+
+
+/**
+ * The `zstd` binary, when this machine has one. A whole-log read through it is
+ * one native pass — a second or two on a log that costs half a minute read frame
+ * by frame through the Node API.
+ * @returns {string | null}
+ */
+let zstdCli
+let zstdCliChecked = false
+function zstdBinary() {
+  if (zstdCliChecked) return zstdCli
+  zstdCliChecked = true
+  for (const candidate of ['/usr/local/bin/zstd', '/opt/homebrew/bin/zstd', '/usr/bin/zstd', 'zstd']) {
+    if (candidate === 'zstd' || existsSync(candidate)) {
+      zstdCli = candidate
+      break
+    }
+  }
+  return zstdCli
+}
+
+/**
+ * Fold a byte range by letting the `zstd` binary decode it, streamed into the
+ * same line scan the frame-by-frame path uses. Concatenated frames are what a
+ * session log is, and the binary walks them natively.
+ * @returns {Promise<{start: number, end: number, frames: number} | null>} null
+ *   when there is nothing to run, so the caller falls back to Node's decoder.
+ */
+async function foldLogRangeViaCli(state, filePath, start, end) {
+  const binary = zstdBinary()
+  if (binary === null || end <= start) return null
+  const child = spawn(binary, ['-dc'], { stdio: ['pipe', 'pipe', 'ignore'] })
+  const source = createReadStream(filePath, { start, end })
+  const decoder = new StringDecoder('utf8')
+  let pending = ''
+  const consume = (chunk) => {
+    const text = pending + decoder.write(chunk)
+    const cut = text.lastIndexOf('\n')
+    if (cut < 0) {
+      pending = text
+      return
+    }
+    foldDiffRecords(text.slice(0, cut), state)
+    pending = text.slice(cut + 1)
+  }
+  child.stdout.on('data', consume)
+  const done = new Promise((resolve, reject) => {
+    child.on('error', reject)
+    child.stdout.on('error', () => resolve())
+    child.on('close', (code) => (code === 0 || code === null ? resolve() : reject(new Error(`zstd exited ${code}`))))
+    source.on('error', reject)
+  })
+  source.pipe(child.stdin)
   try {
-    const length = located.size - start
+    await done
+  } catch {
+    try {
+      child.kill('SIGKILL')
+    } catch {
+      /* already gone */
+    }
+    return null
+  }
+  foldDiffRecords(pending + decoder.end(), state)
+  return { start, end, frames: 0 }
+}
+
+/**
+ * Fold every zstd frame of `[start, end)` into `state`, yielding to the event
+ * loop between batches so a cold read never stalls the harness.
+ * @param {any} state @param {string} filePath @param {number} start @param {number} end
+ * @param {{cap: number, keepNewest: boolean}} plan
+ * @returns {Promise<{start: number, end: number}>} the file offsets of the first
+ *   frame folded and the end of the last one, so the caller can tell a pass that
+ *   covered the log from one that only sampled its tail.
+ */
+async function foldLogRange(state, filePath, start, end, plan) {
+  const length = end - start
+  if (length <= 0) return { start, end: start, frames: 0 }
+  // A range big enough to matter goes through the binary: one native pass beats
+  // a decompression call per frame by an order of magnitude.
+  if (plan.cli === true && length >= CLI_READ_MIN_BYTES) {
+    const viaCli = await foldLogRangeViaCli(state, filePath, start, end)
+    if (viaCli !== null) return viaCli
+  }
+  const handle = await fsp.open(filePath, 'r')
+  try {
     let buffer = Buffer.alloc(length)
     const { bytesRead } = await handle.read(buffer, 0, length, start)
     buffer = buffer.subarray(0, bytesRead)
+    let base = start
     if (start > 0) {
       const align = buffer.indexOf(ZSTD_MAGIC)
-      if (align === -1) return state
-      if (align > 0) buffer = buffer.subarray(align)
+      if (align === -1) return { start, end: start, frames: 0 }
+      if (align > 0) {
+        buffer = buffer.subarray(align)
+        base = start + align
+      }
     }
+    const walkStarted = Date.now()
     const walked = await zstdFrameSlicesAsync(buffer, 0)
+    state.walkMs = (state.walkMs ?? 0) + (Date.now() - walkStarted)
     if (walked.truncated) state.truncated = true
-    // Keep the newest frames only: a cold read must stay bounded on a
-    // multi-hundred-thousand-frame log, and the live event stream covers
-    // everything that happens after this seed.
-    const slices = walked.slices.length > MAX_LOG_TAIL_FRAMES
-      ? walked.slices.slice(-MAX_LOG_TAIL_FRAMES)
-      : walked.slices
-    if (slices.length < walked.slices.length) state.truncated = true
-    state.frames = slices.length
-    state.bytes = buffer.length
+    let slices = walked.slices
+    if (plan.cap !== Infinity && slices.length > plan.cap) {
+      slices = plan.keepNewest === true ? slices.slice(-plan.cap) : slices.slice(0, plan.cap)
+    }
+    state.frames += slices.length
+    const foldStarted = Date.now()
     let pending = ''
     for (let offset = 0; offset < slices.length; offset += 1) {
       const [from, to] = slices[offset]
@@ -538,14 +694,116 @@ async function diffIndexForSession(sessionId, options = {}) {
       if (offset % FOLD_BATCH_FRAMES === FOLD_BATCH_FRAMES - 1) {
         foldDiffRecords(pending, state)
         pending = ''
-        await new Promise((resolve) => setImmediate(resolve))
+        await new Promise((resolve) => (plan.pace === true ? setTimeout(resolve, CRAWL_PAUSE_MS) : setImmediate(resolve)))
       }
     }
     foldDiffRecords(pending, state)
+    state.foldMs = (state.foldMs ?? 0) + (Date.now() - foldStarted)
+    if (slices.length === 0) return { start: base, end: base, frames: 0 }
+    return { start: base + slices[0][0], end: base + slices[slices.length - 1][1], frames: slices.length }
   } finally {
     await handle.close()
   }
-  return state
+}
+
+/** Where a session's diff-index checkpoint lives. */
+function indexCacheFile(sessionId) {
+  const home = process.env.DSH_HOME
+  if (typeof home !== 'string' || home.length === 0) return null
+  return path.join(home, INDEX_CACHE_DIR, `${sessionId.replace(/[^A-Za-z0-9._-]/g, '_')}.json`)
+}
+
+/** The last completed scan of one session, or null. */
+async function readIndexCache(sessionId) {
+  const file = indexCacheFile(sessionId)
+  if (file === null) return null
+  try {
+    const parsed = JSON.parse(await fsp.readFile(file, 'utf8'))
+    if (parsed?.version !== INDEX_CACHE_VERSION) return null
+    if (typeof parsed.offset !== 'number' || Array.isArray(parsed.files) !== true) return null
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+/** Remember a complete scan, so the next look only reads what is new. */
+async function writeIndexCache(sessionId, state, offset) {
+  const file = indexCacheFile(sessionId)
+  if (file === null) return false
+  const payload = JSON.stringify({
+    version: INDEX_CACHE_VERSION,
+    offset,
+    lastSeq: state.lastSeq ?? null,
+    files: [...state.index.values()]
+  })
+  if (Buffer.byteLength(payload) > MAX_INDEX_CACHE_BYTES) return false
+  try {
+    await fsp.mkdir(path.dirname(file), { recursive: true })
+    const tmp = `${file}.tmp`
+    await fsp.writeFile(tmp, payload)
+    await fsp.rename(tmp, file)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** @param {unknown[]} files */
+function seedIndexFromFiles(files) {
+  const index = new Map()
+  for (const entry of Array.isArray(files) ? files : []) {
+    if (typeof entry?.path !== 'string') continue
+    const key = path.normalize(entry.path)
+    index.set(key, {
+      path: key,
+      hunks: Array.isArray(entry.hunks) ? entry.hunks : [],
+      added: typeof entry.added === 'number' ? entry.added : 0,
+      removed: typeof entry.removed === 'number' ? entry.removed : 0,
+      time: typeof entry.time === 'number' ? entry.time : null
+    })
+  }
+  return index
+}
+
+/**
+ * A partial seed finishes itself off the click path: the panel already has an
+ * answer, and the complete index (plus its checkpoint) lands behind it.
+ */
+async function finishIndexInBackground(sessionId) {
+  if (indexCrawls.has(sessionId)) return
+  indexCrawls.add(sessionId)
+  const startedAt = Date.now()
+  try {
+    for (let pass = 0; pass < 64; pass += 1) {
+      const state = await diffIndexForSession(sessionId, { whole: true, pace: true })
+      if (state === null || state.complete === true) {
+        if (state !== null) {
+          liveIndexes.set(sessionId, state)
+          // Close the gap between the crawl's last read and this swap: whatever
+          // the log gained meanwhile is one checkpoint away.
+          const settled = await diffIndexForSession(sessionId).catch(() => null)
+          if (settled !== null) liveIndexes.set(sessionId, settled)
+          void appendPanelDiag({
+            reason: 'crawl',
+            sessionId: sessionId.slice(0, 48),
+            ms: Date.now() - startedAt,
+            walkMs: state.walkMs ?? 0,
+            foldMs: state.foldMs ?? 0,
+            frames: state.frames,
+            files: state.index.size,
+            bytes: state.bytes
+          })
+        }
+        break
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+  } catch {
+    /* a background crawl never reports */
+  } finally {
+    indexCrawls.delete(sessionId)
+  }
 }
 
 /**
@@ -566,20 +824,30 @@ async function sessionDiffIndex(ctx, sessionId, options = {}) {
     return { index: existing.index, frames: existing.frames, bytes: existing.bytes, truncated: existing.truncated, source: existing.source, live: true }
   }
 
-  const state = { index: new Map(), lastSeq: null, frames: 0, bytes: 0, truncated: false, source: 'none' }
-  const refusedAt = queryRefusalCache.get(sessionId)
-  if (refusedAt === undefined || Date.now() - refusedAt >= QUERY_REFUSAL_TTL_MS) {
-    const events = await loadSessionEventsFromQuery(ctx, sessionId, () => queryRefusalCache.set(sessionId, Date.now()))
-    if (events.length > 0) {
-      for (const event of events) foldDiffEvent(event, state)
-      state.source = 'query'
-    }
+  const state = { index: new Map(), lastSeq: null, frames: 0, bytes: 0, truncated: false, source: 'none', complete: false }
+  // The log on disk is the whole truth, and with its checkpoint only the frames
+  // appended since the last look need decoding — so it is read first, not the
+  // whole-log query pass that made a cold click wait tens of seconds.
+  const fromLog = await diffIndexForSession(sessionId).catch(() => null)
+  if (fromLog !== null) {
+    Object.assign(state, fromLog)
+    state.source = 'log'
   }
   if (state.source === 'none') {
-    const fromLog = await diffIndexForSession(sessionId)
-    if (fromLog !== null) Object.assign(state, fromLog)
+    // No readable log for this session: the query service is the only way in.
+    const refusedAt = queryRefusalCache.get(sessionId)
+    if (refusedAt === undefined || Date.now() - refusedAt >= QUERY_REFUSAL_TTL_MS) {
+      const events = await loadSessionEventsFromQuery(ctx, sessionId, () => queryRefusalCache.set(sessionId, Date.now()))
+      if (events.length > 0) {
+        for (const event of events) foldDiffEvent(event, state)
+        state.source = 'query'
+      }
+    }
   }
   adoptLiveIndex(sessionId, state)
+  // A seed that did not reach the start of the log finishes itself while the
+  // reader is already looking at what the newest frames had to say.
+  if (fromLog !== null && fromLog.complete !== true) void finishIndexInBackground(sessionId)
   return { index: state.index, frames: state.frames, bytes: state.bytes, truncated: state.truncated, source: state.source, live: false }
 }
 
@@ -883,6 +1151,21 @@ async function handleDiff(request, ctx) {
 }
 
 /**
+ * Append one line to the panel's diag file, whoever is reporting: the client's
+ * window geometry, or the host's own background work.
+ * @param {object} record
+ * @returns {Promise<string | null>} the file written, or null when there is none.
+ */
+async function appendPanelDiag(record) {
+  const home = process.env.DSH_HOME
+  if (typeof home !== 'string' || home.length === 0) return null
+  const file = path.join(home, 'dsh-file-panel-diag.jsonl')
+  const line = `${JSON.stringify({ ...record, receivedAt: new Date().toISOString() })}\n`
+  await fsp.appendFile(file, line).catch(() => {})
+  return file
+}
+
+/**
  * The panel's black box: the client reports what its window actually looks like
  * (build, mode, geometry, column widths) and it lands in a file next to the
  * harness home, so a report from any machine can be read instead of guessed at.
@@ -890,11 +1173,8 @@ async function handleDiff(request, ctx) {
  */
 async function handleDiag(request) {
   const body = await request.json().catch(() => null)
-  const home = process.env.DSH_HOME
-  if (typeof home !== 'string' || home.length === 0) return ok({ written: false })
-  const file = path.join(home, 'dsh-file-panel-diag.jsonl')
-  const line = `${JSON.stringify({ ...(body ?? {}), receivedAt: new Date().toISOString() })}\n`
-  await fsp.appendFile(file, line).catch(() => {})
+  const file = await appendPanelDiag(body ?? {})
+  if (file === null) return ok({ written: false })
   const stats = await fsp.stat(file).catch(() => null)
   if (stats !== null && stats.size > 400000) {
     const kept = (await fsp.readFile(file, 'utf8').catch(() => '')).split('\n').slice(-200).join('\n')

@@ -2952,6 +2952,10 @@ body[data-ds-dark-theme] .dfp-root {
           current.pendingRevert = null;
           current.diffError = null;
         });
+        // A cold look at a huge session answers from its newest frames and keeps
+        // folding the rest; the tab comes back for the complete answer instead of
+        // making the reader ask for it again.
+        if (diff?.sessionScanTruncated === true) retryTruncatedScan(sessionId, tab.id);
       } catch (error) {
         mutate(sessionId, (s) => {
           const current = findTabById(s, tab.id);
@@ -2962,7 +2966,24 @@ body[data-ds-dark-theme] .dfp-root {
       }
     }
 
-    async function loadChanges(sessionId) {
+    /**
+     * Follow a session scan that reported itself incomplete. The host finishes it
+     * in the background and remembers it, so this is patience rather than a poll:
+     * it stops the moment the answer stops arriving truncated.
+     */
+    function retryTruncatedScan(sessionId, tabId, attempt = 0) {
+      if (attempt >= 12) return;
+      const delay = Math.min(5000, 1200 + attempt * 400);
+      window.setTimeout(async () => {
+        const tab = findTabById(sessionState(sessionId), tabId);
+        if (tab === null || tab.path === null) return;
+        await loadDiff(sessionId, tabId);
+        const fresh = findTabById(sessionState(sessionId), tabId);
+        if (fresh?.diff?.sessionScanTruncated === true) retryTruncatedScan(sessionId, tabId, attempt + 1);
+      }, delay);
+    }
+
+    async function loadChanges(sessionId, attempt = 0) {
       const state = sessionState(sessionId);
       mutate(sessionId, (s) => { s.loadingChanges = true });
       try {
@@ -2972,7 +2993,15 @@ body[data-ds-dark-theme] .dfp-root {
           byRelative[file.relativePath ?? file.path] = file;
           byRelative[file.path] = file;
         }
-        mutate(sessionId, (s) => { s.changes = { files: payload.files ?? [], byRelative } });
+        mutate(sessionId, (s) => {
+          s.changes = { files: payload.files ?? [], byRelative, truncated: payload.truncated === true };
+        });
+        // Incomplete means the host is still folding the older frames of a huge
+        // log; ask again shortly rather than leaving a half-list on screen.
+        if (payload.truncated === true && attempt < 12) {
+          window.setTimeout(() => { void loadChanges(sessionId, attempt + 1) }, Math.min(5000, 1200 + attempt * 400));
+          return;
+        }
       } catch (error) {
         console.warn('[dsh-file-panel] changes failed:', error.message);
       } finally {
