@@ -46,6 +46,8 @@ window.__ModuleLoader__.load({
 
     function notify() {
       runtime.version += 1;
+      syncDockLayout();
+      syncToggleButton();
       for (const listener of listeners) {
         try {
           listener();
@@ -206,6 +208,23 @@ window.__ModuleLoader__.load({
       const result = apply_(sessionState(sessionId));
       notify();
       return result;
+    }
+
+    /** Publish the docked state to the document so the layout can make room. */
+    function syncDockLayout() {
+      if (typeof document === 'undefined' || document.body === null) return;
+      const owner = runtime.owner;
+      const state = owner === null ? undefined : sessionStates.get(owner);
+      const showing = runtime.visible === true
+        && runtime.mode === 'overlay'
+        && state !== undefined
+        && (state.tabs.length > 0 || state.notice !== null || state.pending !== null || state.tab !== 'preview');
+      if (showing === true) {
+        document.body.setAttribute('data-dfp-docked', '1');
+        document.body.style.setProperty('--dfp-dock-width', `${clampDockWidth(runtime.dockWidth)}px`);
+      } else {
+        document.body.removeAttribute('data-dfp-docked');
+      }
     }
 
     function activeTab(state) {
@@ -411,6 +430,19 @@ body[data-ds-dark-theme] .dfp-root {
 /* Docked variant: used when the layout resolves the details column to 0
    (its centre column demands 640px, so narrow windows have no room). */
 .dfp-root[data-dock="true"] { position:fixed; top:0; right:0; bottom:0; z-index:40; width:var(--dfp-dock-width, 420px); background:var(--dsw-alias-bg-layer-2, #1a1b20); border-left:.5px solid var(--dsw-alias-border-l2, rgba(128,128,128,.35)); box-shadow:-10px 0 28px rgba(0,0,0,.32); padding:6px 8px 0; pointer-events:auto; }
+/* Docked panel: inset the layout's centre column by the panel's width so the
+   conversation is narrowed, never covered. DSH keeps the details column at 0px
+   unless it has a details target of its own, so a plugin cannot use that column
+   — this is the closest honest equivalent. */
+body[data-dfp-docked="1"] [class*="centerCol"] { padding-right: var(--dfp-dock-width, 420px); }
+body[data-dfp-docked="1"] [class*="handle"] { display: none; }
+/* The way back in: a slim tab on the right edge, the only thing the plugin
+   draws while the panel is closed. */
+.dfp-toggle { position:fixed; right:0; top:50%; transform:translateY(-50%); z-index:39; appearance:none; border:.5px solid var(--dsw-alias-border-l2, rgba(128,128,128,.35)); border-right:none; border-radius:8px 0 0 8px; background:var(--dsw-alias-bg-module-platform, rgba(30,30,34,.85)); color:var(--dsw-alias-label-secondary, inherit); font:inherit; font-size:11px; line-height:1; padding:10px 5px; cursor:pointer; writing-mode:vertical-rl; opacity:.45; transition:opacity .15s; }
+.dfp-toggle:hover { opacity:1; color:var(--dsw-alias-label-primary, inherit); }
+/* While the panel is open the tab rides its leading edge, so it closes it
+   instead of hiding behind it. */
+body[data-dfp-docked="1"] .dfp-toggle { right: var(--dfp-dock-width, 420px); opacity:.8; }
 .dfp-dock-handle { position:absolute; left:-4px; top:0; bottom:0; width:8px; z-index:2; cursor:col-resize; background:transparent; touch-action:none; pointer-events:auto; border-radius:4px; }
 .dfp-root[data-dock="true"] { overflow:visible; }
 .dfp-dock-handle:hover { background:var(--dsw-alias-brand-primary,#4d6bfe); opacity:.4; }
@@ -1607,8 +1639,9 @@ body[data-ds-dark-theme] .dfp-root {
       }, [docked, ctx]);
       const seatState = sessionStates.get(sessionId);
       if (seatState === undefined || runtime.owner !== sessionId) return null;
-      const empty = seatState.tabs.length === 0 && seatState.notice === null && seatState.pending === null;
-      // Nothing to show is not a reason to cover the conversation.
+      // "Nothing to show" means no tab, no notice and no tree on screen — the
+      // file tree is content, so asking for the panel always draws something.
+      const empty = seatState.tabs.length === 0 && seatState.notice === null && seatState.pending === null && seatState.tab === 'preview';
       if (docked === true && empty === true) return null;
       const dockWidth = docked === true ? clampDockWidth(runtime.dockWidth) : runtime.dockWidth;
       return React.createElement('div', {
@@ -1694,6 +1727,31 @@ body[data-ds-dark-theme] .dfp-root {
       return typeof details === 'number' && details > 0 ? details : 0;
     }
 
+    /** Sidebar width as the layout resolved it (rail width when collapsed). */
+    function sidebarWidth() {
+      const frame = document.querySelector('[data-shell-overlay]')?.parentElement ?? null;
+      if (frame === null) return 280;
+      const width = Math.round(frame.children[0]?.getBoundingClientRect().width ?? 0);
+      return width > 0 ? width : 80;
+    }
+
+    /**
+     * The layout's own column solver (`computeColumns`), reproduced exactly.
+     * `openDetails()` asks for a 360px details column; whether the viewport can
+     * afford it decides if the panel gets a real column or has to dock. Getting
+     * this wrong is what made an earlier build sit in a 0px column: it measured
+     * a closed column, concluded "no column", and never asked for one.
+     */
+    function predictDetailsWidth() {
+      const viewport = window.innerWidth;
+      const sidebar = Math.min(420, Math.max(264, sidebarWidth()));
+      const wanted = 360;
+      if (sidebar + wanted + 640 <= viewport) return wanted;
+      const squeezed = Math.max(300, viewport - sidebar - 640);
+      if (sidebar + squeezed + 640 <= viewport) return squeezed;
+      return 0;
+    }
+
     function columnFits() {
       // Measured, never predicted. A seat inside a collapsed column measures
       // zero pixels: that is the layout telling us it refused the column, and a
@@ -1730,16 +1788,29 @@ body[data-ds-dark-theme] .dfp-root {
       /* dock mode lives inside the seat; nothing extra to tear down */
     }
 
+    /** The toggle tab lives in the document, not in the layout's slots. */
+    function ensureToggleHost() {
+      if (typeof document === 'undefined' || document.body === null) return;
+      if (document.getElementById('dfp-toggle') !== null) return;
+      const tab = document.createElement('button');
+      tab.id = 'dfp-toggle';
+      tab.className = 'dfp-toggle';
+      tab.type = 'button';
+      tab.textContent = '‹ File panel';
+      tab.title = 'Open the file panel (⌥⌘F)';
+      document.body.appendChild(tab);
+    }
+
     /** Pick the host this window can actually render, and switch live on resize. */
     function applyPanelHost(ctx, sessionId) {
-      const want = columnFits() ? 'column' : 'overlay';
-      runtime.mode = want;
-      if (want === 'column') {
+      const predicted = predictDetailsWidth();
+      runtime.mode = predicted > 0 ? 'column' : 'overlay';
+      mountSeat(ctx, sessionId);
+      // Always ask the layout for the column, even when it looks closed: the
+      // request IS what opens it (details width preference 0 → 360).
+      if (predicted > 0) {
         unmountOverlay();
-        mountSeat(ctx, sessionId);
         void openColumn(ctx);
-      } else {
-        mountSeat(ctx, sessionId);
       }
       notify();
       // After the first paint the real width is known: if the column handed us
@@ -1750,7 +1821,9 @@ body[data-ds-dark-theme] .dfp-root {
         if (root === null) return;
         const seatWidth = Math.round(root.getBoundingClientRect().width);
         const column = detailsColumnWidth();
-        const want = column >= 300 || (runtime.mode === 'column' && seatWidth >= 300) ? 'column' : 'overlay';
+        // The layout may still be filling in; a column that never appears (or a
+        // seat the layout handed nothing) means docking instead of disappearing.
+        const want = column >= 300 || seatWidth >= 300 ? 'column' : 'overlay';
         if (want !== runtime.mode) {
           runtime.mode = want;
           notify();
@@ -1819,19 +1892,20 @@ body[data-ds-dark-theme] .dfp-root {
       runtime.owner = null;
     }
 
+    /** Ask the layout for its details column. This call is what opens it. */
     async function openColumn(ctx) {
-      if (originalLayoutOpen !== null) {
+      const attempts = [
+        () => originalLayoutOpen?.(),
+        () => layoutService?.openDetails?.(),
+        () => ctx.get('layout')?.openDetails?.()
+      ];
+      for (const attempt of attempts) {
         try {
-          originalLayoutOpen.call(layoutService);
+          attempt();
+          return;
         } catch (error) {
-          console.warn('[dsh-file-panel] openDetails failed:', error);
+          console.warn('[dsh-file-panel] openDetails attempt failed:', error?.message ?? error);
         }
-        return;
-      }
-      try {
-        ctx.get('layout')?.openDetails?.();
-      } catch {
-        /* layout not mounted yet */
       }
     }
 
@@ -1841,7 +1915,7 @@ body[data-ds-dark-theme] .dfp-root {
       unmountSeat();
       notify();
       try {
-        originalLayoutClose?.call(layoutService);
+        originalLayoutClose?.();
       } catch {
         /* already closed */
       }
@@ -1889,7 +1963,10 @@ body[data-ds-dark-theme] .dfp-root {
       layoutService = layout;
       const prototype = Object.getPrototypeOf(layout);
       if (typeof prototype?.openDetails === 'function') {
-        originalLayoutOpen = prototype.openDetails;
+        // Bind the instance: the implementation reaches into private fields, so
+        // calling the raw prototype method with a foreign `this` throws and the
+        // request is lost. A bound copy keeps the real receiver.
+        originalLayoutOpen = layout.openDetails.bind(layout);
         Object.defineProperty(layout, 'openDetails', {
           configurable: true,
           writable: true,
@@ -1899,7 +1976,7 @@ body[data-ds-dark-theme] .dfp-root {
           }
         });
       }
-      if (typeof prototype?.closeDetails === 'function') originalLayoutClose = prototype.closeDetails;
+      if (typeof prototype?.closeDetails === 'function') originalLayoutClose = layout.closeDetails.bind(layout);
     }
 
     // ------------------------------------------------------------------
@@ -1940,6 +2017,66 @@ body[data-ds-dark-theme] .dfp-root {
         state.notice = notice;
         trace(state, 'refused', notice);
       });
+    }
+
+    let toggleButton = null;
+
+    /** Open the panel without a file: the last tab, or the workspace tree. */
+    function showPanel(ctx, sessionId) {
+      ensureStyles();
+      const id = sessionId ?? currentSessionId(ctx);
+      if (id === null || id === undefined) return;
+      // No blank-session gate here: the dock owns its own space, it does not
+      // need the layout to render a column for it.
+      const facts = sessionFacts(ctx);
+      mutate(id, (state) => {
+        if (state.cwd === null) state.cwd = facts.cwd;
+        if (state.tabs.length === 0) state.tab = 'files';
+        const active = activeTab(state);
+        if (active !== null) {
+          if (active.file === null && active.loading !== true && active.error === null) void loadFile(id, active.id);
+          state.tab = 'preview';
+        }
+      });
+      runtime.visible = true;
+      applyPanelHost(ctx, id);
+      const state = sessionState(id);
+      if (state.tabs.length === 0 && state.cwd !== null) void loadTree(id, state.cwd);
+    }
+
+    function togglePanel(ctx) {
+      if (runtime.visible === true) closePanel(ctx);
+      else showPanel(ctx, runtime.owner ?? currentSessionId(ctx));
+    }
+
+    /** The slim tab that is the plugin's only resting UI. */
+    function syncToggleButton() {
+      if (typeof document === 'undefined' || document.body === null) return;
+      const owner = runtime.owner ?? (panelContext === null ? null : currentSessionId(panelContext));
+      const state = owner === null ? undefined : sessionStates.get(owner);
+      const hasWork = state !== undefined && (state.tabs.length > 0 || state.notice !== null || state.pending !== null);
+      const canvas = document.getElementById('dfp-toggle') ?? null;
+      if (canvas === null) {
+        if (toggleButton !== null) {
+          toggleButton.remove();
+          toggleButton = null;
+        }
+        return;
+      }
+      if (toggleButton === null) {
+        toggleButton = canvas;
+        canvas.addEventListener('click', (event) => {
+          event.stopPropagation();
+          if (panelContext === null) return;
+          togglePanel(panelContext);
+        });
+      }
+      const open = runtime.visible === true;
+      canvas.textContent = open ? '✕ File panel' : '‹ File panel';
+      canvas.setAttribute('data-open', open ? '1' : '0');
+      canvas.title = open
+        ? 'Close the file panel (⌥⌘F)'
+        : hasWork ? 'Reopen the file panel (⌥⌘F)' : 'Open the file panel (⌥⌘F)';
     }
 
     function closeTab(sessionId, index) {
@@ -2463,6 +2600,7 @@ body[data-ds-dark-theme] .dfp-root {
 
     function apply(ctx) {
       ensureStyles();
+      ensureToggleHost();
       panelContext = ctx; // eslint-disable-line no-unused-expressions
       // Ask the host what its paths look like; a Windows harness answers `\\`.
       void callHost('health', {}).then((value) => {
@@ -2474,6 +2612,13 @@ body[data-ds-dark-theme] .dfp-root {
       if (wrapped !== true) console.warn('[dsh-file-panel] opener not wrapped; file links keep opening externally');
       watchSessions(ctx);
       startPolling(ctx);
+      window.addEventListener('keydown', (event) => {
+        // ⌥⌘F (Ctrl+Alt+F off macOS) toggles the panel from anywhere.
+        if (event.altKey === true && (event.metaKey === true || event.ctrlKey === true) && event.key.toLowerCase() === 'f') {
+          event.preventDefault();
+          togglePanel(ctx);
+        }
+      }, true);
       window.addEventListener('resize', () => {
         if (runtime.visible === true && runtime.owner !== null && panelContext !== null) {
           applyPanelHost(panelContext, runtime.owner);
@@ -2562,7 +2707,7 @@ body[data-ds-dark-theme] .dfp-root {
           }))
         }
       };
-      console.log('[dsh-file-panel] ready 0.3.9', { wrapped, primitives: primitives !== null });
+      console.log('[dsh-file-panel] ready 0.4.0', { wrapped, primitives: primitives !== null });
     }
 
     const inject = ['slots', 'sessions', 'layout', 'remote', 'remote.session'];

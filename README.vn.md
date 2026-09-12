@@ -169,7 +169,8 @@ accept/reject theo từng chunk (ở đây là revert), cả hai chế độ dif
 
 ## Changelog
 
-- **0.3.9** — dock không còn "dính": bấm ra ngoài hoặc `Escape` là panel ẩn đi; bề rộng bị chặn ở 45% cửa sổ; và dock không có gì để hiện (không tab, không notice) thì **không vẽ ra** — nên nó không thể nằm đè lên chat mà trông như lỗi.
+- **0.4.0** — panel **đẩy** chat chứ không đè, và luôn có đường vào. Dock giờ chèn padding vào cột giữa (`centerCol` = bề rộng panel) thay vì phủ lên; một tab mảnh `‹ File panel` ở mép phải (bấm để mở/đóng, `⌥⌘F` từ bất kỳ đâu), và nó bám mép panel khi panel đang mở. Mở mà chưa có file thì hiện cây workspace. Panel chỉ hiện khi được gọi — click file, bấm tab, hoặc phím tắt.
+- **0.3.9** — — dock không còn "dính": bấm ra ngoài hoặc `Escape` là panel ẩn đi; bề rộng bị chặn ở 45% cửa sổ; và dock không có gì để hiện (không tab, không notice) thì **không vẽ ra** — nên nó không thể nằm đè lên chat mà trông như lỗi.
 - **0.3.8** — panel không bao giờ vô hình. Việc nó chiếm cột phải hay dock giờ **đo thật** (độ rộng thật của cột), không đoán theo bản sao công thức chia cột của DSH: ở vài cỡ cửa sổ cột phải resolve về 0px, panel vẫn mount ở đó thành dải 0px mà vẫn giữ ghế — nhìn y như UI hỏng. `ResizeObserver` đổi qua lại giữa cột và dock ngay khi layout đổi ý.
 - **0.3.7** — không mở gì trừ khi nó có thật trên đĩa. Mọi đường vào (link chat, tool row, cây file, quick open, dòng review) đều `stat` trước: path không tồn tại bị từ chối kèm **đúng đường dẫn tuyệt đối đã thử** và **không tạo tab nào**, nên panel không bao giờ trông như đã mở một file không tồn tại. Link thư mục vẫn mở cây file. Host từ chối trả byte cho path thiếu (`404 not-found`) và từ chối mọi thứ không phải file thường.
 - **0.3.6** — surface `Edit` thành editor kiểu IDE: gutter số dòng cuộn theo text và sáng dòng đang đứng, band dòng hiện tại, `Ln, Col`, Tab = 2 spaces, Enter giữ indent, `Cmd-S` lưu có sha-guard, `Revert edits`.
