@@ -357,31 +357,75 @@ window.__ModuleLoader__.load({
 
     /** @type {HTMLElement | null} */
     let editorHost = null
+    let editorTimer = null
+    let editorPlacement = ''
 
     function closeEditor() {
       if (editorHost !== null) {
         editorHost.remove()
         editorHost = null
       }
+      editorPlacement = ''
+      stopEditorTracking()
       window.removeEventListener('keydown', onEditorKey, true)
       window.removeEventListener('scroll', repositionEditor, true)
       window.removeEventListener('resize', repositionEditor, true)
     }
 
+    /**
+     * Keep the frame welded to the message it belongs to.
+     *
+     * An edit is bound to one message in one session: the frame follows that
+     * row while the transcript scrolls, and retires the moment the row is gone
+     * or the window is showing a different session. It is never left floating
+     * over an unrelated conversation.
+     */
     function repositionEditor() {
       if (editorHost === null) return
-      const anchor = editorHost.dataset.anchor
-      const row = anchor === undefined || anchor === '' ? null : document.querySelector(`[data-chat-flow-key="${anchor.replace(/"/g, '\\"')}"]`)
-      const card = editorHost.firstElementChild
-      if (row === null || card === null) return
+      const anchor = editorHost.dataset.anchor ?? ''
+      if (anchor === '') return
+      if (editorHost.dataset.session !== sessionIdOf(stateCtx)) {
+        closeEditor()
+        return
+      }
+      const row = document.querySelector(`[data-chat-flow-key="${anchor.replace(/"/g, '\\"')}"]`)
+      if (row === null) {
+        closeEditor()
+        return
+      }
       const rect = row.getBoundingClientRect()
-      const width = Math.min(680, Math.max(360, rect.width))
-      const height = card.getBoundingClientRect().height
-      const maxTop = Math.max(8, window.innerHeight - height - 8)
-      const maxLeft = Math.max(8, window.innerWidth - width - 8)
-      editorHost.style.top = `${Math.round(Math.min(Math.max(8, rect.top - 4), maxTop))}px`
-      editorHost.style.left = `${Math.round(Math.min(Math.max(8, rect.right - width), maxLeft))}px`
+      // The row unpainted (detached, collapsed, or virtualised away) or scrolled
+      // fully out of the scrollport: the message is not on screen, so neither is
+      // its editor.
+      if ((rect.width === 0 && rect.height === 0) || rect.bottom < 0 || rect.top > window.innerHeight) {
+        closeEditor()
+        return
+      }
+      const width = Math.round(Math.min(Math.max(440, rect.width), 860))
+      const left = Math.max(8, Math.min(Math.round(rect.right - width), window.innerWidth - width - 8))
+      // Vertical position follows the message; it only lifts when the frame
+      // itself would fall off the bottom, so Send never leaves the screen.
+      const height = editorHost.firstElementChild?.getBoundingClientRect().height ?? 0
+      const wanted = Math.round(rect.top - 4)
+      const top = height > 0 ? Math.max(8, Math.min(wanted, window.innerHeight - height - 8)) : Math.max(8, wanted)
+      const geometry = `${top}:${left}:${width}`
+      if (geometry === editorPlacement) return
+      editorPlacement = geometry
+      editorHost.style.top = `${top}px`
+      editorHost.style.left = `${left}px`
       editorHost.style.width = `${width}px`
+    }
+
+    /** Re-check binding without waiting for a scroll or resize event. */
+    function startEditorTracking() {
+      stopEditorTracking()
+      editorTimer = window.setInterval(repositionEditor, 150)
+    }
+
+    function stopEditorTracking() {
+      if (editorTimer === null) return
+      clearInterval(editorTimer)
+      editorTimer = null
     }
 
     function onEditorKey(event) {
@@ -424,6 +468,7 @@ window.__ModuleLoader__.load({
       const host = document.createElement('div')
       host.id = EDITOR_ID
       host.dataset.anchor = key
+      host.dataset.session = sessionId
       host.style.cssText = 'position:fixed;z-index:2147483000;'
 
       const card = document.createElement('div')
@@ -471,6 +516,7 @@ window.__ModuleLoader__.load({
       resizeTextarea(textarea)
       repositionEditor()
       requestAnimationFrame(() => repositionEditor())
+      startEditorTracking()
 
       // --- images: thumbnail + remove, loaded through the harness image cache
       const renderImages = () => {
@@ -624,48 +670,61 @@ window.__ModuleLoader__.load({
 #${PENCIL_ID}:hover { color: #fff; border-color: var(--dsw-alias-label-tertiary, #8b8d98); background: var(--dsw-alias-interactive-bg-hover, #3a3a40); }
 #${PENCIL_ID}:active { background: var(--dsw-alias-state-business-primary, #4d6bfe); border-color: transparent; color: #fff; }
 #${EDITOR_ID} .dme-card {
-  box-sizing: border-box; width: 100%; padding: 10px 12px 8px;
-  border: .5px solid var(--dsw-alias-border-l2, #3a3a40); border-radius: 14px;
-  background: var(--dsw-alias-bg-layer-1, #1f1f23);
-  box-shadow: var(--dsw-elevation-prominent, 0 8px 28px rgba(0,0,0,.45));
-  display: flex; flex-direction: column; gap: 8px;
+  box-sizing: border-box; width: 100%; padding: 12px 14px 10px;
+  border: .5px solid var(--dsw-alias-border-l1, #303036); border-radius: 18px;
+  background: var(--dsw-specific-tip, #26262a);
+  box-shadow: var(--dsw-elevation-panel, 0 6px 24px rgba(0,0,0,.35));
+  display: flex; flex-direction: column; gap: 10px;
 }
-#${EDITOR_ID} .dme-label { font: var(--dsw-font-xs-strong-13, 500 13px/20px Inter, sans-serif); color: var(--dsw-alias-label-tertiary, #8b8d98); }
 #${EDITOR_ID} .dme-images { display: flex; flex-wrap: wrap; gap: 8px; }
-#${EDITOR_ID} .dme-chip { position: relative; width: 62px; height: 62px; flex: none; }
+#${EDITOR_ID} .dme-chip { position: relative; width: 68px; height: 68px; flex: none; }
 #${EDITOR_ID} .dme-chip img {
-  width: 100%; height: 100%; object-fit: cover; border-radius: 10px;
-  border: .5px solid var(--dsw-alias-border-l2, #3a3a40); background: var(--dsw-alias-bg-base, #17171a);
+  display: block; width: 100%; height: 100%; object-fit: cover; border-radius: 12px;
+  border: .5px solid var(--dsw-alias-border-l1, #303036); background: var(--dsw-alias-bg-base, #17171a);
 }
-#${EDITOR_ID} .dme-chip-broken img { opacity: .4; }
+#${EDITOR_ID} .dme-chip-broken img { opacity: .35; }
 #${EDITOR_ID} .dme-chip-x {
-  position: absolute; top: -6px; right: -6px; width: 20px; height: 20px; padding: 0;
-  display: grid; place-items: center; cursor: pointer; border-radius: 999px;
-  border: .5px solid var(--dsw-alias-border-l3, #3d3d44); background: var(--dsw-specific-menu, #2b2b2f);
-  color: var(--dsw-alias-label-primary, #fff); font: 500 14px/1 Inter, sans-serif;
+  position: absolute; top: -6px; right: -6px; box-sizing: border-box;
+  width: 22px; height: 22px; padding: 0; display: grid; place-items: center;
+  cursor: pointer; border: none; border-radius: 999px;
+  background: var(--dsw-alias-button-floating-fill, #3a3a40); color: var(--dsw-alias-label-primary, #fff);
+  font: 400 15px/1 Inter, sans-serif;
   box-shadow: var(--dsw-elevation-panel, 0 2px 8px rgba(0,0,0,.4));
+  opacity: .9; transition: background .12s linear, opacity .12s linear;
 }
-#${EDITOR_ID} .dme-chip-x:hover { background: var(--dsw-alias-state-error-primary, #ff6b6b); border-color: transparent; }
+#${EDITOR_ID} .dme-chip-x:hover { background: var(--dsw-alias-state-error-primary, #ff6b6b); opacity: 1; }
+#${EDITOR_ID} .dme-chip-x:focus-visible { outline: 2px solid var(--dsw-alias-label-tertiary, #8b8d98); outline-offset: 1px; }
 #${EDITOR_ID} .dme-input {
-  box-sizing: border-box; width: 100%; min-height: 40px; max-height: 320px; resize: none;
-  padding: 8px 10px; border: .5px solid var(--dsw-alias-border-l4, #4a4a52); border-radius: 10px;
-  background: var(--dsw-alias-bg-base, #17171a); color: var(--dsw-alias-label-primary, #fff);
-  font: var(--dsw-font-s-14, 400 14px/22px Inter, sans-serif); outline: none; overflow-y: auto;
+  box-sizing: border-box; width: 100%; min-height: 26px; max-height: 320px; resize: none;
+  padding: 0 2px; margin: 0; border: none; outline: none; background: transparent;
+  color: var(--dsw-alias-label-primary, #fff); overflow-y: auto;
+  font-family: Inter, var(--dsw-font-family, sans-serif);
+  font-size: var(--dsh-content-font-size, 15px); line-height: 1.55;
 }
-#${EDITOR_ID} .dme-input:focus { border-color: var(--dsw-alias-state-business-primary, #4d6bfe); }
-#${EDITOR_ID} .dme-status { font: var(--dsw-font-xs-13, 400 13px/18px Inter, sans-serif); color: var(--dsw-alias-state-error-primary, #ff6b6b); min-height: 0; }
+#${EDITOR_ID} .dme-input::placeholder { color: var(--dsw-alias-label-caption, #77787f); }
+#${EDITOR_ID} .dme-status {
+  font-size: var(--dsh-content-font-size-secondary, 12px); line-height: 18px;
+  color: var(--dsw-alias-state-error-primary, #ff6b6b);
+}
 #${EDITOR_ID} .dme-status:empty { display: none; }
-#${EDITOR_ID} .dme-actions { display: flex; align-items: center; gap: 8px; }
-#${EDITOR_ID} .dme-hint { flex: auto; font: var(--dsw-font-xxs-12, 400 12px/16px Inter, sans-serif); color: var(--dsw-alias-label-caption, #77787f); }
+#${EDITOR_ID} .dme-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+#${EDITOR_ID} .dme-hint {
+  margin-right: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: var(--dsh-content-font-size-secondary, 12px); line-height: 16px; color: var(--dsw-alias-label-caption, #77787f);
+}
 #${EDITOR_ID} .dme-button {
-  height: 30px; padding: 0 14px; border-radius: 15px; cursor: pointer;
-  border: .5px solid var(--dsw-alias-border-l4, #4a4a52); background: transparent;
-  color: var(--dsw-alias-label-primary, #fff); font: var(--dsw-font-xs-strong-13, 500 13px/20px Inter, sans-serif);
+  height: 32px; padding: 0 16px; border-radius: 16px; cursor: pointer;
+  border: .5px solid var(--dsw-alias-border-l1, #303036); background: transparent;
+  color: var(--dsw-alias-label-primary, #fff);
+  font: 500 13px/20px Inter, var(--dsw-font-family), sans-serif;
+  transition: background .12s linear, opacity .12s linear;
 }
 #${EDITOR_ID} .dme-button:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover, #3a3a40); }
-#${EDITOR_ID} .dme-button:disabled { opacity: .5; cursor: default; }
-#${EDITOR_ID} .dme-primary { border-color: transparent; background: var(--dsw-alias-state-business-primary, #4d6bfe); color: #fff; }
-#${EDITOR_ID} .dme-primary:hover:not(:disabled) { filter: brightness(1.08); }
+#${EDITOR_ID} .dme-button:disabled { opacity: .45; cursor: default; }
+#${EDITOR_ID} .dme-primary {
+  border-color: transparent; background: var(--dsw-alias-button-info-fill, #4d6bfe); color: #fff;
+}
+#${EDITOR_ID} .dme-primary:hover:not(:disabled) { background: var(--dsw-alias-button-info-hover, #3f5cf0); }
 `
     }
 
