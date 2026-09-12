@@ -61,7 +61,7 @@ window.__ModuleLoader__.load({
 
     /** The build this client is. Shown in the footer so it is never a guess
      *  which version a window is running. */
-    const CLIENT_BUILD = '0.4.2';
+    const CLIENT_BUILD = '0.4.3';
 
     let tabSeq = 0;
 
@@ -308,8 +308,10 @@ window.__ModuleLoader__.load({
         && (state.tabs.length > 0 || state.notice !== null || state.pending !== null || state.tab !== 'preview');
       if (showing === true) {
         const push = pushWidth();
-        document.body.setAttribute('data-dfp-docked', push > 0 ? '1' : '0');
-        document.body.style.setProperty('--dfp-dock-width', `${push}px`);
+        document.body.setAttribute('data-dfp-docked', '1');
+        document.body.setAttribute('data-dfp-push', push > 0 ? '1' : '0');
+        document.body.style.setProperty('--dfp-dock-width', `${clampDockWidth(runtime.dockWidth)}px`);
+        document.body.style.setProperty('--dfp-push', `${push}px`);
       } else {
         document.body.removeAttribute('data-dfp-docked');
       }
@@ -517,12 +519,12 @@ body[data-ds-dark-theme] .dfp-root {
 .dfp-sep { height:1px; background:var(--dsw-alias-border-l2, rgba(128,128,128,.2)); margin:2px 0; }
 /* Docked variant: used when the layout resolves the details column to 0
    (its centre column demands 640px, so narrow windows have no room). */
-.dfp-root[data-dock="true"] { position:fixed; top:0; right:0; bottom:0; z-index:40; width:var(--dfp-dock-width, 420px); background:var(--dsw-alias-bg-layer-2, #1a1b20); border-left:.5px solid var(--dsw-alias-border-l2, rgba(128,128,128,.35)); box-shadow:-10px 0 28px rgba(0,0,0,.32); padding:6px 8px 0; pointer-events:auto; }
+.dfp-root[data-dock="true"] { box-sizing:border-box; position:fixed; top:0; right:0; bottom:0; z-index:40; width:var(--dfp-dock-width, 420px); background:var(--dsw-alias-bg-layer-2, #1a1b20); border-left:.5px solid var(--dsw-alias-border-l2, rgba(128,128,128,.35)); box-shadow:-10px 0 28px rgba(0,0,0,.32); padding:6px 8px 0; pointer-events:auto; }
 /* Docked panel: inset the layout's centre column by the panel's width so the
    conversation is narrowed, never covered. DSH keeps the details column at 0px
    unless it has a details target of its own, so a plugin cannot use that column
    — this is the closest honest equivalent. */
-body[data-dfp-docked="1"] [class*="centerCol"] { padding-right: var(--dfp-dock-width, 420px); }
+body[data-dfp-docked="1"] [class*="centerCol"] { padding-right: var(--dfp-push, 0px); }
 body[data-dfp-docked="1"] [class*="handle"] { display: none; }
 /* The way back in: a slim tab on the right edge, the only thing the plugin
    draws while the panel is closed. */
@@ -531,6 +533,7 @@ body[data-dfp-docked="1"] [class*="handle"] { display: none; }
 /* While the panel is open the tab rides its leading edge, so it closes it
    instead of hiding behind it. */
 body[data-dfp-docked="1"] .dfp-toggle { right: var(--dfp-dock-width, 420px); opacity:.8; }
+body[data-dfp-docked="0"] .dfp-toggle { right: 0; }
 .dfp-dock-handle { position:absolute; left:-4px; top:0; bottom:0; width:8px; z-index:2; cursor:col-resize; background:transparent; touch-action:none; pointer-events:auto; border-radius:4px; }
 .dfp-root[data-dock="true"] { overflow:visible; }
 .dfp-dock-handle:hover { background:var(--dsw-alias-brand-primary,#4d6bfe); opacity:.4; }
@@ -1834,10 +1837,15 @@ body[data-dfp-docked="1"] .dfp-toggle { right: var(--dfp-dock-width, 420px); opa
       return Math.round(frame.children[1]?.getBoundingClientRect().width ?? window.innerWidth);
     }
 
-    /** How far the conversation may be inset: never below 520px of content. */
+    /**
+     * Inset the conversation only when it can afford it: the chat keeps at least
+     * 700px of content, otherwise the panel floats over the edge instead of
+     * squeezing the chat into a column.
+     */
     function pushWidth() {
-      const room = centerColumnWidth() - 520;
-      return Math.max(0, Math.min(clampDockWidth(runtime.dockWidth), room));
+      const dock = Math.min(clampDockWidth(runtime.dockWidth), defaultDockWidth());
+      const center = centerColumnWidth();
+      return center - dock >= 700 ? dock : 0;
     }
 
     /** Sidebar width as the layout resolved it (rail width when collapsed). */
@@ -1955,7 +1963,14 @@ body[data-dfp-docked="1"] .dfp-toggle { right: var(--dfp-dock-width, 420px); opa
     let dockDragging = false;
     let dockMoves = 0;
 
-    /** The dock may take at most 45% of the window, and never the sidebar. */
+    /**
+     * How wide the panel may be. A 420px panel is a third of a 1200px window, so
+     * the default scales with the window instead of assuming a wide one.
+     */
+    function defaultDockWidth() {
+      return Math.max(300, Math.min(420, Math.round(window.innerWidth * 0.32)));
+    }
+
     function clampDockWidth(width) {
       const limit = Math.max(280, Math.round(window.innerWidth * 0.45));
       return Math.max(280, Math.min(width, limit));
@@ -2159,6 +2174,7 @@ body[data-dfp-docked="1"] .dfp-toggle { right: var(--dfp-dock-width, 420px); opa
         }
       });
       runtime.visible = true;
+      if (runtime.dockWidth > defaultDockWidth()) runtime.dockWidth = defaultDockWidth();
       applyPanelHost(ctx, id);
       const state = sessionState(id);
       if (state.tabs.length === 0 && state.cwd !== null) void loadTree(id, state.cwd);
@@ -2227,6 +2243,7 @@ body[data-dfp-docked="1"] .dfp-toggle { right: var(--dfp-dock-width, 420px); opa
         : (typeof cwd === 'string' && cwd.length > 0 ? nativePath(`${cwd.replace(/[/\\]+$/, '')}/${requested}`) : requested);
 
       runtime.visible = true;
+      if (runtime.dockWidth > defaultDockWidth()) runtime.dockWidth = defaultDockWidth();
       applyPanelHost(ctx, sessionId);
       // The workspace root is known whether or not the path turns out to exist:
       // the refused notice and the tree still need somewhere to point at.
