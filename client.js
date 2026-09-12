@@ -25,7 +25,13 @@ window.__ModuleLoader__.load({
     const EDITOR_ID = 'dsh-message-edit-editor'
     const PENCIL_ID = 'dsh-message-edit-pencil'
     const NODE_KIND = 'dsh-message-edit'
-    const USER_KIND_PREFIX = 'input-message'
+    /**
+     * Flow-key kind prefixes that carry a message id. `input-message` is the
+     * harness's own user row; `dsh-message-edit` is the row this plugin renders
+     * for an already-edited message — without it an edited message could never
+     * be edited again.
+     */
+    const USER_KIND_PREFIXES = ['input-message', 'dsh-message-edit', 'steering']
     const POLL_INTERVAL_MS = 1500
     const LABELS = {
       edit: 'Sửa tin nhắn',
@@ -34,8 +40,7 @@ window.__ModuleLoader__.load({
       sending: 'Đang gửi…',
       hint: 'Esc để hủy · ⌘/Ctrl+Enter để gửi',
       failed: 'Sửa tin nhắn thất bại',
-      editing: 'Đang sửa tin nhắn — gửi để thay vào đúng chỗ đó và chạy lại AI',
-      cancelEdit: 'Hủy bỏ'
+      removeImage: 'Gỡ ảnh này'
     }
 
     /** The Chat transcript's row identity, as `conversationContextKey` composes it. */
@@ -49,9 +54,12 @@ window.__ModuleLoader__.load({
       const separator = key.indexOf(':')
       if (separator < 0) return null
       const tail = key.slice(separator + 1)
-      if (!tail.startsWith(USER_KIND_PREFIX)) return null
-      const id = tail.slice(USER_KIND_PREFIX.length)
-      return id === '' ? null : id
+      for (const prefix of USER_KIND_PREFIXES) {
+        if (!tail.startsWith(prefix)) continue
+        const id = tail.slice(prefix.length)
+        return id === '' ? null : id
+      }
+      return null
     }
 
     // ------------------------------------------------------------------
@@ -75,11 +83,11 @@ window.__ModuleLoader__.load({
       return payload.value
     }
 
-    async function postEdit(sessionId, messageId, text, images) {
+    async function postEdit(sessionId, messageId, text, keepImages) {
       const body = { sessionId, messageId, text, requestId: crypto.randomUUID() }
-      // Present (even empty) means the composer owned the content, so the host
-      // replaces the whole content list instead of only the text block.
-      if (Array.isArray(images)) body.images = images
+      // Present (even empty) tells the host which of the message's own images
+      // stay; images can only be dropped by an edit, never added.
+      if (Array.isArray(keepImages)) body.keepImages = keepImages
       const response = await fetch('/api/dsh-message-edit.edit', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -327,254 +335,20 @@ window.__ModuleLoader__.load({
       offerPencil({ messageId: row.messageId, row: row.row })
     }
 
-    async function openFromPencil() {
+    function openFromPencil() {
       if (hovered === null) return
       const row = hovered.row
       const messageId = hovered.messageId
       const message = editableMessages().find((entry) => entry.id === messageId)
-      if (!row.isConnected) return
+      if (!row.isConnected || message === undefined) return
       hidePencil()
       closeEditor()
-      // The harness composer is the editor; the card is only the fallback for a
-      // client where that service is not reachable.
-      if (await startEdit(stateCtx, messageId)) return
-      openEditor(stateCtx, row, messageId, message?.text ?? '')
+      openEditor(stateCtx, row, messageId, message)
     }
 
     function onViewportChange() {
       if (hovered === null) return
       positionPencil()
-    }
-
-    // ------------------------------------------------------------------
-    // composer-driven edit
-    //
-    // The harness's own composer is the editor: the plugin puts the message's
-    // text and its images into it, and the next submit is routed to the edit
-    // instead of to a new prompt. That keeps every composer capability the user
-    // already has — image attach, paste, drag, mentions, the model row — with no
-    // second input surface to maintain.
-    // ------------------------------------------------------------------
-
-    const BANNER_ID = 'dsh-message-edit-banner'
-
-    /** @type {{ sessionId: string, messageId: string, savedDraft: string, imageIds: string[], onSubmitted?: Function } | null} */
-    let editing = null
-    let bannerTimer = null
-
-    function conversationService() {
-      try {
-        return stateCtx?.get?.('conversation') ?? null
-      } catch {
-        return null
-      }
-    }
-
-    function inputShell(sessionId) {
-      const conversation = conversationService()
-      try {
-        return conversation?.input?.shell?.(sessionId) ?? null
-      } catch {
-        return null
-      }
-    }
-
-    /** Current composer text, read from the shell's own projection. */
-    function currentDraft(shell) {
-      const projected = shell?.projection?.clipboardText
-      if (typeof projected === 'string') return projected
-      const published = shell?.state?.getSnapshot?.()
-      if (typeof published?.draft === 'string') return published.draft
-      return ''
-    }
-
-    function composerInput() {
-      return document.querySelector('[data-slot="conversation.composer"] [contenteditable="true"], [data-composer-seat] [contenteditable="true"]')
-    }
-
-    /** Rebuild one durable message image as a File the composer can hold. */
-    async function fileOfAttachment(ctx, sessionId, attachment) {
-      const url = await ctx.uiConversation.imageUrl(sessionId, attachment)
-      const response = await fetch(url)
-      const blob = await response.blob()
-      const type = typeof blob.type === 'string' && blob.type.startsWith('image/') ? blob.type : 'image/png'
-      const extension = type.slice('image/'.length)
-      return new File([blob], `edited-image.${extension}`, { type })
-    }
-
-    function bannerElement() {
-      let element = document.getElementById(BANNER_ID)
-      if (element !== null) return element
-      element = document.createElement('div')
-      element.id = BANNER_ID
-      const text = document.createElement('span')
-      text.className = 'dme-banner-text'
-      text.textContent = LABELS.editing
-      const cancel = document.createElement('button')
-      cancel.type = 'button'
-      cancel.className = 'dme-banner-cancel'
-      cancel.textContent = LABELS.cancelEdit
-      cancel.addEventListener('pointerdown', (event) => {
-        event.preventDefault()
-        event.stopPropagation()
-        cancelEdit()
-      })
-      element.append(text, cancel)
-      document.body.appendChild(element)
-      return element
-    }
-
-    function placeBanner() {
-      const element = document.getElementById(BANNER_ID)
-      if (element === null || editing === null) return
-      const seat = document.querySelector('[data-composer-seat]')
-      const rect = seat === null ? null : seat.getBoundingClientRect()
-      const width = Math.min(680, Math.max(360, (rect?.width ?? 680) - 32))
-      const top = rect === null || rect.height === 0 ? window.innerHeight - 160 : rect.top - element.getBoundingClientRect().height - 10
-      element.style.width = `${width}px`
-      element.style.top = `${Math.max(8, Math.round(top))}px`
-      element.style.left = `${Math.round(Math.max(8, window.innerWidth / 2 - width / 2))}px`
-    }
-
-    function showBanner() {
-      const element = bannerElement()
-      element.style.display = 'flex'
-      placeBanner()
-      if (bannerTimer !== null) return
-      bannerTimer = window.setInterval(() => {
-        if (editing === null) {
-          clearInterval(bannerTimer)
-          bannerTimer = null
-          return
-        }
-        placeBanner()
-      }, 150)
-    }
-
-    function hideBanner() {
-      const element = document.getElementById(BANNER_ID)
-      if (element !== null) element.style.display = 'none'
-      if (bannerTimer !== null) {
-        clearInterval(bannerTimer)
-        bannerTimer = null
-      }
-    }
-
-    /**
-     * Put one message into the composer as an edit.
-     * @returns true when the composer took over; false when the caller should
-     *   fall back to the standalone editor card.
-     */
-    async function startEdit(ctx, messageId) {
-      const sessionId = sessionIdOf(ctx)
-      if (sessionId === null) return false
-      const message = editableMessages().find((entry) => entry.id === messageId)
-      if (message === undefined) return false
-      const conversation = conversationService()
-      const shell = inputShell(sessionId)
-      if (conversation === null || shell === null) return false
-      try {
-        const savedDraft = currentDraft(shell)
-        const imageIds = []
-        for (const attachment of message.images ?? []) {
-          try {
-            const file = await fileOfAttachment(ctx, sessionId, attachment)
-            const created = conversation.createDraftImages([file]) ?? []
-            for (const entry of created) imageIds.push(entry.id)
-          } catch (error) {
-            console.warn('[dsh-message-edit] could not restore one image into the composer:', error?.message ?? error)
-          }
-        }
-        if (imageIds.length > 0) shell.actions?.addImages?.(imageIds)
-        shell.actions?.setDraft?.(message.text ?? '')
-        editing = { sessionId, messageId, savedDraft, imageIds }
-        showBanner()
-        const input = composerInput()
-        if (input !== null) input.focus()
-        return true
-      } catch (error) {
-        console.warn('[dsh-message-edit] composer edit unavailable:', error?.message ?? error)
-        return false
-      }
-    }
-
-    /** Leave edit mode, restoring the draft the composer held before. */
-    function cancelEdit(ctx) {
-      if (editing === null) return
-      const { sessionId, savedDraft, imageIds } = editing
-      editing = null
-      hideBanner()
-      const shell = inputShell(sessionId)
-      const conversation = conversationService()
-      try {
-        shell?.actions?.setDraft?.(savedDraft ?? '')
-      } catch {
-        /* the composer may already be gone */
-      }
-      for (const id of imageIds) {
-        try {
-          conversation?.releaseDraftImage?.(id)
-        } catch {
-          /* already released */
-        }
-      }
-      void ctx
-    }
-
-    /**
-     * Route the composer's submit to the edit while an edit is open. Installed
-     * once, restored on dispose; every other session keeps the original path.
-     */
-    function installSubmitInterceptor(ctx) {
-      const conversation = conversationService()
-      if (conversation === null || typeof conversation.sendSession !== 'function') return () => {}
-      const original = conversation.sendSession
-      const wrapped = async function (session, text, imageIds, mode, signal) {
-        const active = editing
-        if (active === null || session?.sessionId !== active.sessionId) {
-          return original.call(this, session, text, imageIds, mode, signal)
-        }
-        const ids = Array.isArray(imageIds) ? imageIds : []
-        let images = []
-        if (ids.length > 0) {
-          try {
-            images = await conversation.serializeDraftImages(ids)
-          } catch (error) {
-            console.warn('[dsh-message-edit] image serialization failed:', error?.message ?? error)
-          }
-        }
-        editing = null
-        hideBanner()
-        try {
-          await postEdit(active.sessionId, active.messageId, text ?? '', images)
-        } catch (error) {
-          console.warn('[dsh-message-edit] edit failed:', error?.message ?? error)
-          return { kind: 'error' }
-        }
-        for (const id of ids) {
-          try {
-            conversation.releaseDraftImage(id)
-          } catch {
-            /* already released */
-          }
-        }
-        try {
-          shellClearDraft(active.sessionId)
-        } catch {
-          /* nothing to clear */
-        }
-        void ctx
-        await refresh(stateCtx, true)
-        return { kind: 'success' }
-      }
-      conversation.sendSession = wrapped
-      return () => {
-        if (conversation.sendSession === wrapped) conversation.sendSession = original
-      }
-    }
-
-    function shellClearDraft(sessionId) {
-      inputShell(sessionId)?.actions?.setDraft?.('')
     }
 
     // ------------------------------------------------------------------
@@ -626,15 +400,27 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * Open the inline editor over one message row. The row itself stays in
-     * place underneath an opaque card, so cancel restores it untouched and no
-     * React-owned node is ever mutated.
+     * Turn one message row into a temporary edit frame, the way ChatGPT does:
+     * the frame sits exactly where the message was, holds its images with a
+     * remove button each, the text in a textarea, and Cancel / Send.
+     *
+     * Only the text is editable and images can only be dropped — matching the
+     * original UX, where new attachments come from a new message, not an edit.
+     *
+     * @param ctx - owning client context.
+     * @param row - the transcript row being edited.
+     * @param messageId - durable id of the message.
+     * @param message - the host-reported message, carrying text and images.
      */
-    function openEditor(ctx, row, messageId, initialText) {
+    function openEditor(ctx, row, messageId, message) {
       closeEditor()
       const sessionId = sessionIdOf(ctx)
       if (sessionId === null) return
       const key = row.dataset.chatFlowKey ?? ''
+      const initialText = typeof message?.text === 'string' ? message.text : ''
+      /** Images the user has not removed yet; sent back so the host keeps exactly these. */
+      let keptImages = Array.isArray(message?.images) ? [...message.images] : []
+
       const host = document.createElement('div')
       host.id = EDITOR_ID
       host.dataset.anchor = key
@@ -643,9 +429,8 @@ window.__ModuleLoader__.load({
       const card = document.createElement('div')
       card.className = 'dme-card'
 
-      const label = document.createElement('div')
-      label.className = 'dme-label'
-      label.textContent = LABELS.edit
+      const imageRow = document.createElement('div')
+      imageRow.className = 'dme-images'
 
       const textarea = document.createElement('textarea')
       textarea.className = 'dme-input'
@@ -672,9 +457,9 @@ window.__ModuleLoader__.load({
       send.textContent = LABELS.send
       actions.append(hint, cancel, send)
 
-      card.append(label, textarea, status, actions)
+      card.append(imageRow, textarea, status, actions)
       host.appendChild(card)
-      // Bring the message being edited into view first: the card anchors to the
+      // Bring the message being edited into view first: the frame anchors to the
       // row, so opening it off-screen would look like nothing happened.
       try {
         row.scrollIntoView({ block: 'center', inline: 'nearest' })
@@ -686,8 +471,39 @@ window.__ModuleLoader__.load({
       resizeTextarea(textarea)
       repositionEditor()
       requestAnimationFrame(() => repositionEditor())
-      textarea.focus()
-      textarea.setSelectionRange(textarea.value.length, textarea.value.length)
+
+      // --- images: thumbnail + remove, loaded through the harness image cache
+      const renderImages = () => {
+        imageRow.textContent = ''
+        imageRow.style.display = keptImages.length === 0 ? 'none' : 'flex'
+        for (const [index, attachment] of keptImages.entries()) {
+          const chip = document.createElement('div')
+          chip.className = 'dme-chip'
+          const image = document.createElement('img')
+          image.alt = ''
+          chip.appendChild(image)
+          const remove = document.createElement('button')
+          remove.type = 'button'
+          remove.className = 'dme-chip-x'
+          remove.title = LABELS.removeImage
+          remove.setAttribute('aria-label', LABELS.removeImage)
+          remove.textContent = '×'
+          remove.addEventListener('pointerdown', (event) => {
+            event.preventDefault()
+            event.stopPropagation()
+            keptImages = keptImages.filter((_, position) => position !== index)
+            renderImages()
+            repositionEditor()
+          })
+          chip.appendChild(remove)
+          imageRow.appendChild(chip)
+          void ctx.uiConversation
+            .imageUrl(sessionId, attachment)
+            .then((url) => { image.src = url })
+            .catch(() => { chip.classList.add('dme-chip-broken') })
+        }
+      }
+      renderImages()
 
       let busy = false
       const syncSend = () => {
@@ -698,32 +514,34 @@ window.__ModuleLoader__.load({
         syncSend()
       })
       syncSend()
+
       cancel.addEventListener('click', () => closeEditor())
 
       send.addEventListener('click', async () => {
         if (busy) return
         busy = true
-        send.disabled = true
         cancel.disabled = true
-        syncSend()
         send.textContent = LABELS.sending
+        syncSend()
         status.textContent = ''
         try {
-          await postEdit(sessionId, messageId, textarea.value)
+          await postEdit(sessionId, messageId, textarea.value, keptImages)
           closeEditor()
           await refresh(ctx, true)
         } catch (error) {
           busy = false
           cancel.disabled = false
           send.textContent = LABELS.send
-          syncSend()
           status.textContent = `${LABELS.failed}: ${error.message}`
+          syncSend()
         }
       })
 
       window.addEventListener('keydown', onEditorKey, true)
       window.addEventListener('scroll', repositionEditor, true)
       window.addEventListener('resize', repositionEditor, true)
+      textarea.focus()
+      textarea.setSelectionRange(textarea.value.length, textarea.value.length)
     }
 
     function resizeTextarea(textarea) {
@@ -794,21 +612,6 @@ window.__ModuleLoader__.load({
       if (element.dataset.mounted === '1') return
       element.dataset.mounted = '1'
       element.textContent = `
-#${BANNER_ID} {
-  position: fixed; z-index: 2147482950; display: none; box-sizing: border-box;
-  align-items: center; gap: 10px; padding: 8px 10px 8px 14px;
-  border: .5px solid var(--dsw-alias-state-business-primary, #4d6bfe); border-radius: 12px;
-  background: var(--dsw-specific-menu, #2b2b2f); color: var(--dsw-alias-label-secondary, #c3c4cb);
-  box-shadow: var(--dsw-elevation-prominent, 0 8px 28px rgba(0,0,0,.45));
-  font: var(--dsw-font-xs-13, 400 13px/18px Inter, sans-serif);
-}
-#${BANNER_ID} .dme-banner-text { flex: auto; min-width: 0; }
-#${BANNER_ID} .dme-banner-cancel {
-  flex: none; height: 26px; padding: 0 12px; border-radius: 13px; cursor: pointer;
-  border: .5px solid var(--dsw-alias-border-l4, #4a4a52); background: transparent;
-  color: var(--dsw-alias-label-primary, #fff); font: var(--dsw-font-xs-strong-13, 500 13px/20px Inter, sans-serif);
-}
-#${BANNER_ID} .dme-banner-cancel:hover { background: var(--dsw-alias-interactive-bg-hover, #3a3a40); }
 #${PENCIL_ID} {
   position: fixed; z-index: 2147482900; display: none; place-items: center;
   box-sizing: border-box; width: 30px; height: 30px; padding: 0; margin: 0;
@@ -828,6 +631,21 @@ window.__ModuleLoader__.load({
   display: flex; flex-direction: column; gap: 8px;
 }
 #${EDITOR_ID} .dme-label { font: var(--dsw-font-xs-strong-13, 500 13px/20px Inter, sans-serif); color: var(--dsw-alias-label-tertiary, #8b8d98); }
+#${EDITOR_ID} .dme-images { display: flex; flex-wrap: wrap; gap: 8px; }
+#${EDITOR_ID} .dme-chip { position: relative; width: 62px; height: 62px; flex: none; }
+#${EDITOR_ID} .dme-chip img {
+  width: 100%; height: 100%; object-fit: cover; border-radius: 10px;
+  border: .5px solid var(--dsw-alias-border-l2, #3a3a40); background: var(--dsw-alias-bg-base, #17171a);
+}
+#${EDITOR_ID} .dme-chip-broken img { opacity: .4; }
+#${EDITOR_ID} .dme-chip-x {
+  position: absolute; top: -6px; right: -6px; width: 20px; height: 20px; padding: 0;
+  display: grid; place-items: center; cursor: pointer; border-radius: 999px;
+  border: .5px solid var(--dsw-alias-border-l3, #3d3d44); background: var(--dsw-specific-menu, #2b2b2f);
+  color: var(--dsw-alias-label-primary, #fff); font: 500 14px/1 Inter, sans-serif;
+  box-shadow: var(--dsw-elevation-panel, 0 2px 8px rgba(0,0,0,.4));
+}
+#${EDITOR_ID} .dme-chip-x:hover { background: var(--dsw-alias-state-error-primary, #ff6b6b); border-color: transparent; }
 #${EDITOR_ID} .dme-input {
   box-sizing: border-box; width: 100%; min-height: 40px; max-height: 320px; resize: none;
   padding: 8px 10px; border: .5px solid var(--dsw-alias-border-l4, #4a4a52); border-radius: 10px;
@@ -866,7 +684,6 @@ window.__ModuleLoader__.load({
 
       stateCtx = ctx
       pencilElement()
-      const removeInterceptor = installSubmitInterceptor(ctx)
       document.addEventListener('pointermove', onPointerMove, true)
       // The transcript scrolls under the button; keep it glued to its message.
       // No `pointerleave` listener anywhere: a leave fires for every descendant
@@ -877,9 +694,6 @@ window.__ModuleLoader__.load({
       ctx.effect(() => () => {
         closeEditor()
         hidePencil()
-        hideBanner()
-        editing = null
-        removeInterceptor()
         document.removeEventListener('pointermove', onPointerMove, true)
         window.removeEventListener('scroll', onViewportChange, true)
         window.removeEventListener('resize', onViewportChange)
@@ -898,14 +712,6 @@ window.__ModuleLoader__.load({
           const sessionId = sessionIdOf(ctx)
           return postEdit(sessionId, messageId, text)
         },
-        openEditor: (messageId) => {
-          const row = [...document.querySelectorAll('[data-chat-flow-kind="user"]')]
-            .find((element) => messageIdOfKey(element.dataset.chatFlowKey) === messageId)
-          if (row === undefined) return false
-          const message = editableMessages().find((entry) => entry.id === messageId)
-          openEditor(ctx, row, messageId, message?.text ?? '')
-          return true
-        },
         pencilTarget: () => (hovered === null ? null : { messageId: hovered.messageId, connected: hovered.row.isConnected }),
         pencilBox: () => {
           const element = document.getElementById(PENCIL_ID)
@@ -920,11 +726,39 @@ window.__ModuleLoader__.load({
           return true
         },
         closeEditor,
-        editTarget: () => (editing === null ? null : { sessionId: editing.sessionId, messageId: editing.messageId, imageIds: editing.imageIds.length }),
-        startEdit: (messageId) => startEdit(ctx, messageId),
-        cancelEdit: () => cancelEdit(ctx),
-        isEditing: () => editing !== null,
         isEditorOpen: () => editorHost !== null,
+        openEditorFor: (messageId) => {
+          const row = [...document.querySelectorAll('[data-chat-flow-kind="user"]')]
+            .find((element) => messageIdOfKey(element.dataset.chatFlowKey) === messageId)
+          const message = editableMessages().find((entry) => entry.id === messageId)
+          if (row === undefined || message === undefined) return false
+          openEditor(ctx, row, messageId, message)
+          return true
+        },
+        editorState: () => {
+          const host = document.getElementById(EDITOR_ID)
+          if (host === null) return null
+          return {
+            value: host.querySelector('textarea')?.value ?? null,
+            chips: host.querySelectorAll('.dme-chip').length,
+            chipsWithImage: [...host.querySelectorAll('.dme-chip img')].filter((img) => img.src !== '').length,
+            buttons: [...host.querySelectorAll('.dme-actions button')].map((button) => button.textContent)
+          }
+        },
+        removeChip: (index) => {
+          const host = document.getElementById(EDITOR_ID)
+          const chip = host?.querySelectorAll('.dme-chip')?.[index]
+          if (chip === undefined) return false
+          chip.querySelector('.dme-chip-x')?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+          return true
+        },
+        sendEditor: () => {
+          const host = document.getElementById(EDITOR_ID)
+          const button = host?.querySelector('[data-dme-action="send"]')
+          if (button === undefined) return false
+          button.click()
+          return true
+        },
         hiddenKeys: () => (stateSnapshot()?.hiddenKeys ?? []),
         editableMessages: () => editableMessages(),
         chatKey,

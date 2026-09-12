@@ -237,38 +237,43 @@ function commitEdit(session, edit) {
 }
 
 /**
- * Admit browser image uploads through the deployment's own attachment store.
- *
- * The composer hands the plugin the same canonical base64 wire form it hands
- * the host, so admission reuses the store's batch policy (count, aggregate
- * bytes, media types) instead of inventing a second image path.
- *
- * @param ctx - host plugin context.
- * @param images - `{ mediaType, data, name? }` entries in composer order.
- * @returns core image blocks carrying durable attachment references.
+ * Whether two attachment references address the same stored image. The ref
+ * shape is the attachment store's own; identity is compared on the id pair and
+ * falls back to structural equality so a store that adds fields still matches.
  */
-async function admitImages(ctx, images) {
-  if (!Array.isArray(images) || images.length === 0) return []
-  const attachments = ctx.get('attachments')
-  if (attachments?.saveImages === undefined) {
-    throw coded('unsupported', 'Dịch vụ attachment không khả dụng nên chưa nhận được ảnh.')
+function sameAttachment(left, right) {
+  if (left === undefined || right === undefined || left === null || right === null) return false
+  if (typeof left.attachmentId === 'string' && typeof right.attachmentId === 'string') {
+    return left.attachmentId === right.attachmentId && String(left.variantId ?? '') === String(right.variantId ?? '')
   }
-  const inputs = images.map((image) => {
-    if (typeof image?.mediaType !== 'string' || typeof image?.data !== 'string' || image.data === '') {
-      throw coded('bad-request', 'Mỗi ảnh phải có mediaType và data base64.')
+  try {
+    return JSON.stringify(left) === JSON.stringify(right)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Build the edited content of an existing message: the text is replaced, every
+ * other block keeps its place, and an image the user removed from the edit
+ * frame is dropped. An edit never introduces a new attachment.
+ */
+function contentForEdit(originalContent, text, keepImages) {
+  const blocks = []
+  let placed = false
+  for (const block of Array.isArray(originalContent) ? originalContent : []) {
+    if (block?.type === 'text') {
+      if (placed) continue
+      placed = true
+      if (text !== '') blocks.push({ type: 'text', text })
+      continue
     }
-    const decoded = Buffer.from(image.data, 'base64')
-    if (decoded.length === 0 || decoded.toString('base64') !== image.data) {
-      throw coded('bad-request', 'Ảnh không phải base64 hợp lệ.')
-    }
-    return {
-      data: new Uint8Array(decoded),
-      mediaType: image.mediaType,
-      ...(typeof image.name === 'string' && image.name !== '' ? { name: image.name } : {})
-    }
-  })
-  const refs = await attachments.saveImages(inputs)
-  return refs.map((ref) => ({ type: 'image', attachment: ref }))
+    if (block?.type === 'image' && keepImages !== null
+      && keepImages.some((ref) => sameAttachment(ref, block.attachment)) === false) continue
+    blocks.push(block)
+  }
+  if (!placed && text !== '') blocks.push({ type: 'text', text })
+  return blocks
 }
 
 // ---------------------------------------------------------------------------
@@ -442,22 +447,21 @@ async function handleEdit(ctx, request) {
   const sessionId = typeof body.sessionId === 'string' ? body.sessionId : ''
   const messageId = typeof body.messageId === 'string' ? body.messageId : ''
   const text = typeof body.text === 'string' ? body.text : ''
-  const composerDriven = Array.isArray(body.images)
+  const keepImages = Array.isArray(body.keepImages) ? body.keepImages : null
   if (messageId === '') throw coded('bad-request', 'messageId is required')
   const agent = resolveAgent(ctx, sessionId)
   const session = agent.session
   const located = locateSurfaceMessage(session, messageId)
   if (located === undefined) throw coded('not-found', 'Tin nhắn này không còn nằm trong hội thoại đang hoạt động.')
-  const keptBlocks = (Array.isArray(located.event.data.content) ? located.event.data.content : []).filter((block) => block?.type !== 'text')
-  let content
-  if (composerDriven === true) {
-    const imageBlocks = await admitImages(ctx, body.images)
-    content = [...imageBlocks, ...(text === '' ? [] : [{ type: 'text', text }])]
-    if (content.length === 0) throw coded('bad-request', 'Tin nhắn không được để trống.')
-  } else if (text === '' && keptBlocks.length === 0) {
-    throw coded('bad-request', 'Tin nhắn không được để trống.')
-  }
-  if (composerDriven !== true && messageText(located.event.data.content) === text && pendingEdits.has(sessionId) === false) {
+  const originalContent = Array.isArray(located.event.data.content) ? located.event.data.content : []
+  const content = keepImages === null ? undefined : contentForEdit(originalContent, text, keepImages)
+  if (content !== undefined && content.length === 0) throw coded('bad-request', 'Tin nhắn không được để trống.')
+
+  // Unchanged edit: nothing to truncate, nothing to regenerate.
+  const originalImages = originalContent.filter((block) => block?.type === 'image')
+  if (text === messageText(originalContent)
+    && (keepImages === null || keepImages.length === originalImages.length)
+    && pendingEdits.has(sessionId) === false) {
     return ok({ changed: false, reason: 'identical' })
   }
   if (pendingEdits.has(sessionId)) throw coded('busy', 'Đang có một lần sửa khác chạy trên phiên này.')
