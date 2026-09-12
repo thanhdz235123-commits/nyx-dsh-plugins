@@ -430,6 +430,24 @@ function hiddenFromLog(session) {
   return { keys, turns: [...turns].sort((left, right) => left - right) }
 }
 
+/**
+ * The provider/model/effort the session last built a request with, read from the
+ * request header the harness recorded — the same source the composer's own
+ * selector reads.
+ * @param {any} session
+ * @returns {{provider: string, model: string, effort?: string} | null}
+ */
+function currentModelOf(session) {
+  const config = session?.requestHeader?.()?.config
+  if (config === null || config === undefined) return null
+  if (typeof config.provider !== 'string' || typeof config.model !== 'string') return null
+  return {
+    provider: config.provider,
+    model: config.model,
+    ...(typeof config.reasoningEffort === 'string' ? { effort: config.reasoningEffort } : {})
+  }
+}
+
 /** @param {any} ctx @param {any} request */
 async function handleState(ctx, request) {
   const url = new URL(request.url)
@@ -460,6 +478,9 @@ async function handleState(ctx, request) {
     build: BUILD,
     sessionId,
     status: agent.status ?? 'unknown',
+    // The model the last request went out with, so the edit frame can say which
+    // one a re-run would use before the reader changes it.
+    model: currentModelOf(session),
     messages,
     hiddenKeys: hidden.keys,
     hiddenTurns: hidden.turns,

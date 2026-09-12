@@ -62,7 +62,9 @@ tr[${REPLACED_ATTR}="true"][data-turn-start="true"] > td:last-child::after {
       failed: 'Sửa tin nhắn thất bại',
       removeImage: 'Gỡ ảnh này',
       emptyHint: 'Gõ nội dung (hoặc giữ ảnh) để gửi',
-      unchanged: 'Nội dung chưa đổi — sửa chữ rồi gửi lại'
+      unchanged: 'Nội dung chưa đổi — sửa chữ rồi gửi lại',
+      model: 'Model',
+      modelKeep: 'Giữ model hiện tại'
     }
 
     /** The Chat transcript's row identity, as `conversationContextKey` composes it. */
@@ -138,6 +140,73 @@ tr[${REPLACED_ATTR}="true"][data-turn-start="true"] > td:last-child::after {
         throw error
       }
       return payload.value
+    }
+
+
+    /** "Giữ model hiện tại (…)" — the option that leaves the selection alone. */
+    function keepModelLabel(model) {
+      if (model === null || model === undefined || typeof model.model !== 'string' || model.model === '') return LABELS.modelKeep
+      return `${LABELS.modelKeep} (${model.model})`
+    }
+
+    /** The host's model catalog, shared by every frame opened in this page. */
+    let modelCatalog = null
+    let modelCatalogAt = 0
+
+    async function loadModelCatalog(ctx) {
+      if (modelCatalog !== null && Date.now() - modelCatalogAt < 60000) return modelCatalog
+      const answer = await ctx.remote?.session?.modelCatalog?.()
+      if (answer?.ok !== true) throw new Error(answer?.error?.message ?? 'model catalog unavailable')
+      modelCatalog = answer.value
+      modelCatalogAt = Date.now()
+      return modelCatalog
+    }
+
+    /**
+     * Fill the frame's picker from the host's catalog. The value carries both
+     * halves of the choice, because a model id means nothing without its provider.
+     */
+    async function fillModelOptions(ctx, select) {
+      try {
+        const catalog = await loadModelCatalog(ctx)
+        for (const group of Array.isArray(catalog?.groups) ? catalog.groups : []) {
+          const models = Array.isArray(group?.models) ? group.models : []
+          if (models.length === 0) continue
+          const holder = document.createElement('optgroup')
+          holder.label = typeof group.name === 'string' && group.name !== '' ? group.name : String(group.id ?? '')
+          for (const model of models) {
+            const option = document.createElement('option')
+            option.value = `${group.id}\u0000${model.id}`
+            option.textContent = typeof model.name === 'string' && model.name !== '' ? model.name : String(model.id)
+            holder.append(option)
+          }
+          select.append(holder)
+        }
+        if (select.querySelectorAll('option').length <= 1) {
+          select.disabled = true
+          select.title = 'Không có model nào để chọn'
+        }
+      } catch (error) {
+        select.disabled = true
+        select.title = error instanceof Error ? error.message : String(error)
+      }
+    }
+
+    /**
+     * Hand the harness the model this re-run should use. This is the same call the
+     * composer's own picker makes, so the session's selection — and every request
+     * after it — agrees with what the frame said it would do.
+     * @returns {Promise<{provider: string, model: string} | null>} null when the reader kept the current model.
+     */
+    async function applyModelChoice(ctx, sessionId, value) {
+      if (typeof value !== 'string' || value === '') return null
+      const [provider, model] = value.split('\u0000')
+      if (provider === undefined || model === undefined || provider === '' || model === '') return null
+      const call = ctx.remote?.session?.selectModel
+      if (typeof call !== 'function') throw new Error('phiên này không đổi được model')
+      const answer = await call({ sessionId, provider, model })
+      if (answer?.ok === false) throw new Error(`${answer.error?.code ?? 'error'}: ${answer.error?.message ?? 'đổi model thất bại'}`)
+      return { provider, model }
     }
 
     // ------------------------------------------------------------------
@@ -595,6 +664,24 @@ tr[${REPLACED_ATTR}="true"][data-turn-start="true"] > td:last-child::after {
       const status = document.createElement('div')
       status.className = 'dme-status'
 
+      // A re-run is a new answer, and a new answer may deserve another model:
+      // the picker below hands the harness the same selection its own composer
+      // picker does, so the regenerating request leaves on the chosen one.
+      const modelRow = document.createElement('div')
+      modelRow.className = 'dme-model-row'
+      const modelLabel = document.createElement('span')
+      modelLabel.className = 'dme-model-label'
+      modelLabel.textContent = LABELS.model
+      const modelSelect = document.createElement('select')
+      modelSelect.className = 'dme-model'
+      modelSelect.dataset.dmeAction = 'model'
+      const keepOption = document.createElement('option')
+      keepOption.value = ''
+      keepOption.textContent = keepModelLabel(message?.model ?? stateSnapshot()?.model ?? null)
+      modelSelect.append(keepOption)
+      modelRow.append(modelLabel, modelSelect)
+      void fillModelOptions(ctx, modelSelect)
+
       const actions = document.createElement('div')
       actions.className = 'dme-actions'
       const hint = document.createElement('span')
@@ -612,7 +699,7 @@ tr[${REPLACED_ATTR}="true"][data-turn-start="true"] > td:last-child::after {
       send.textContent = LABELS.send
       actions.append(hint, cancel, send)
 
-      card.append(imageRow, textarea, status, actions)
+      card.append(imageRow, textarea, modelRow, status, actions)
       host.appendChild(card)
       // Bring the message being edited into view first: the frame anchors to the
       // row, so opening it off-screen would look like nothing happened.
@@ -698,9 +785,12 @@ tr[${REPLACED_ATTR}="true"][data-turn-start="true"] > td:last-child::after {
           messageId,
           textLength: textarea.value.length,
           keptImages: keptImages.length,
+          model: modelSelect.value === '' ? null : modelSelect.value.split('\u0000').join('/'),
           key
         })
         try {
+          const chosen = await applyModelChoice(ctx, sessionId, modelSelect.value)
+          if (chosen !== null) postDiag({ phase: 'model', messageId, provider: chosen.provider, model: chosen.model })
           const result = await postEdit(sessionId, messageId, textarea.value, keptImages)
           postDiag({ phase: 'sent', messageId, changed: result?.changed !== false, seq: result?.seq ?? null, reason: result?.reason ?? null })
           // An edit that changes nothing is not an edit: keep the frame open and
@@ -854,6 +944,19 @@ tr[${REPLACED_ATTR}="true"][data-turn-start="true"] > td:last-child::after {
   color: var(--dsw-alias-state-error-primary, #ff6b6b);
 }
 #${EDITOR_ID} .dme-status:empty { display: none; }
+#${EDITOR_ID} .dme-model-row { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+#${EDITOR_ID} .dme-model-label {
+  flex: none; font-size: var(--dsh-content-font-size-secondary, 12px); line-height: 16px;
+  color: var(--dsw-alias-label-caption, #77787f);
+}
+#${EDITOR_ID} .dme-model {
+  min-width: 0; max-width: 260px; height: 28px; padding: 0 8px; cursor: pointer;
+  border-radius: 8px; border: .5px solid var(--dsw-alias-border-l1, #303036);
+  background: var(--dsw-alias-bg-layer-1, #232329);
+  color: var(--dsw-alias-label-primary, #fff);
+  font: 500 12px/18px Inter, var(--dsw-font-family), sans-serif;
+}
+#${EDITOR_ID} .dme-model:disabled { opacity: .5; cursor: default; }
 #${EDITOR_ID} .dme-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 #${EDITOR_ID} .dme-hint {
   margin-right: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -971,6 +1074,15 @@ tr[${REPLACED_ATTR}="true"][data-turn-start="true"] > td:last-child::after {
           chip.querySelector('.dme-chip-x')?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
           return true
         },
+        modelOptions: () => [...document.querySelectorAll('#dsh-message-edit-editor .dme-model option')]
+          .map((option) => ({ value: option.value, label: option.textContent })),
+        chooseModel: (value) => {
+          const select = document.querySelector('#dsh-message-edit-editor .dme-model')
+          if (select === null) return false
+          select.value = value
+          select.dispatchEvent(new Event('change', { bubbles: true }))
+          return select.value === value
+        },
         sendEditor: () => {
           const host = document.getElementById(EDITOR_ID)
           const button = host?.querySelector('[data-dme-action="send"]')
@@ -989,7 +1101,7 @@ tr[${REPLACED_ATTR}="true"][data-turn-start="true"] > td:last-child::after {
       console.log(`[dsh-message-edit] client ${CLIENT_BUILD} loaded`)
     }
 
-    const inject = ['sessions', 'uiConversation']
+    const inject = ['sessions', 'uiConversation', 'remote', 'remote.session']
 
     exports.apply = apply
     exports.inject = inject
