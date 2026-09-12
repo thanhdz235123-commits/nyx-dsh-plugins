@@ -61,7 +61,7 @@ window.__ModuleLoader__.load({
 
     /** The build this client is. Shown in the footer so it is never a guess
      *  which version a window is running. */
-    const CLIENT_BUILD = '0.5.1';
+    const CLIENT_BUILD = '0.5.2';
 
     let tabSeq = 0;
 
@@ -2039,6 +2039,35 @@ body[data-ds-dark-theme] .dfp-root {
       runtime.owner = null;
     }
 
+    /**
+     * Anything of ours still on screen while the panel is closed is a bug — and
+     * the usual cause is a client hot-reload: the previous generation's module
+     * instance dies with its disposer, so its React tree keeps rendering inside
+     * the layout's (often 0px) details column and overflows as a strip of
+     * leftovers at the window edge.
+     */
+    function strayNodes() {
+      const keep = document.getElementById(STYLE_ID);
+      return [...document.querySelectorAll('[id^="dfp-"],[class*="dfp-"]')]
+        .filter((el) => el !== keep)
+        .filter((el) => el.closest('[class*="dfp-root"]') === null);
+    }
+
+    function sweepStrays() {
+      const removed = [];
+      for (const element of strayNodes()) {
+        const rect = element.getBoundingClientRect();
+        removed.push({
+          what: element.id.length > 0 ? element.id : String(element.className).slice(0, 60),
+          x: Math.round(rect.x),
+          w: Math.round(rect.width),
+          h: Math.round(rect.height)
+        });
+        element.remove();
+      }
+      return removed;
+    }
+
     const openerOriginals = new WeakMap();
 
     function installOpenerInterceptor(ctx) {
@@ -2791,6 +2820,29 @@ body[data-ds-dark-theme] .dfp-root {
     }
 
     function applyInner(ctx) {
+      // Retire the previous generation of this client first: after a hot reload
+      // its seat entry is still registered and its tree is still on screen.
+      const previous = window.__dfpGeneration;
+      let retired = false;
+      if (previous !== undefined && typeof previous.retire === 'function') {
+        try {
+          previous.retire();
+          retired = true;
+        } catch (error) {
+          console.warn('[dsh-file-panel] could not retire the previous generation:', error?.message ?? error);
+        }
+      }
+      const swept = sweepStrays();
+      window.__dfpGeneration = {
+        retire: () => {
+          try {
+            unmountSeatOnly();
+          } catch {
+            /* already gone */
+          }
+          sweepStrays();
+        }
+      };
       ensureStyles();
       ensureToggleHost();
       panelContext = ctx; // eslint-disable-line no-unused-expressions
@@ -2908,12 +2960,19 @@ body[data-ds-dark-theme] .dfp-root {
         primitives: primitives !== null,
         inject: inject.join(','),
         hasRemote: ctx.remote !== undefined,
-        hasSessionRemote: ctx.remote?.session !== undefined
+        hasSessionRemote: ctx.remote?.session !== undefined,
+        retiredPrevious: retired,
+        swept: swept.length === 0 ? 0 : swept
       }).catch(() => {});
       // Announce arrival and then keep reporting while the panel is on screen.
       reportDiag('loaded', true);
       window.setTimeout(() => reportDiag('settled', true), 2500);
       window.setInterval(() => {
+        const strays = strayNodes();
+        if (strays.length > 0) {
+          const removed = sweepStrays();
+          void postHost('diag', { reason: 'strays', build: CLIENT_BUILD, removed }).catch(() => {});
+        }
         if (runtime.visible === true) reportDiag('heartbeat', true);
       }, 15000);
     }
