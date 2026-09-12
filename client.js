@@ -22,6 +22,7 @@ window.__ModuleLoader__.load({
     const STYLE_ID = 'dsh-file-panel-style';
     const DOCK_HOST_ID = 'dsh-file-panel-dock-host';
     const LAYOUT_ROOM_ID = 'dsh-file-panel-room';
+    const RAIL_STYLE_ID = 'dfp-hide-turn-rail';
     const SEAT_PRIORITY = -1000;
     const POLL_INTERVAL_MS = 2000;
     /** The narrowest conversation the panel is willing to leave behind. */
@@ -315,14 +316,14 @@ window.__ModuleLoader__.load({
 
     function applyTurnRailPreference() {
       if (typeof document === 'undefined') return;
-      const existing = document.getElementById('dfp-hide-turn-rail');
+      const existing = document.getElementById(RAIL_STYLE_ID);
       if (hideTurnRail !== true) {
         if (existing !== null) existing.remove();
         return;
       }
       if (existing !== null) return;
       const style = document.createElement('style');
-      style.id = 'dfp-hide-turn-rail';
+      style.id = RAIL_STYLE_ID;
       style.textContent = '[class*="MumKSa_frame"],[class*="MumKSa_slot"]{display:none !important}';
       document.head.appendChild(style);
     }
@@ -2097,10 +2098,15 @@ body[data-ds-dark-theme] .dfp-root {
      * the layout's (often 0px) details column and overflows as a strip of
      * leftovers at the window edge.
      */
+    /**
+     * Nodes of ours that a previous client generation left on screen. Our own
+     * style tags are not strays: sweeping them took the turn-rail park down
+     * every couple of seconds, so the rail the panel had put away came back.
+     */
     function strayNodes() {
-      const keep = document.getElementById(STYLE_ID);
+      const keep = new Set([STYLE_ID, RAIL_STYLE_ID, LAYOUT_ROOM_ID]);
       return [...document.querySelectorAll('[id^="dfp-"],[class*="dfp-"]')]
-        .filter((el) => el !== keep)
+        .filter((el) => keep.has(el.id) !== true)
         .filter((el) => el.closest('[class*="dfp-root"]') === null);
     }
 
@@ -2995,7 +3001,7 @@ body[data-ds-dark-theme] .dfp-root {
       pollTimer = window.setInterval(async () => {
         // A hot reload can take the park down with it; the preference is the
         // source of truth, so it is put back where it belongs.
-        if (hideTurnRail === true && document.getElementById('dfp-hide-turn-rail') === null) applyTurnRailPreference();
+        if (hideTurnRail === true && document.getElementById(RAIL_STYLE_ID) === null) applyTurnRailPreference();
         if (runtime.visible !== true || runtime.owner === null) return;
         const sessionId = runtime.owner;
         const state = sessionState(sessionId);
@@ -3161,7 +3167,7 @@ body[data-ds-dark-theme] .dfp-root {
           setIntercept: (value) => { interceptEnabled = value === true },
           hideTurnRail: (value) => { hideTurnRail = value === true; applyTurnRailPreference(); return hideTurnRail; },
           railPreference: () => hideTurnRail,
-          railHidden: () => document.getElementById('dfp-hide-turn-rail') !== null,
+          railHidden: () => document.getElementById(RAIL_STYLE_ID) !== null,
           clickPaths: (value) => {
             clickPaths = value !== false;
             if (clickPaths === true) {
