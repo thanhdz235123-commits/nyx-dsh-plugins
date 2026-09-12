@@ -1,0 +1,50 @@
+{
+  "name": "dsh-message-edit",
+  "version": "0.1.0",
+  "description": "True edit-message for DeepSeek Harness: replace a user message in place, truncate everything after it, and regenerate from that exact point.",
+  "type": "module",
+  "main": "./index.js",
+  "bin": {
+    "dsh-message-edit": "./bin/dsh-message-edit.mjs"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "dsh-plugin",
+    "message-edit",
+    "regenerate"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-primitives"
+      ],
+      "immediately": true,
+      "platform": "web"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "bin/",
+    "tools/",
+    "README.md",
+    "LICENSE"
+  ]
+}
