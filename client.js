@@ -35,7 +35,7 @@ window.__ModuleLoader__.load({
     // store — one state per session, one owner for the seat
     // ------------------------------------------------------------------
 
-    const runtime = { version: 0, visible: false, owner: null, mode: 'column', dockWidth: 420 };
+    const runtime = { version: 0, visible: false, owner: null, mode: 'overlay', dockWidth: 420, suspended: false };
     const sessionStates = new Map();
     const listeners = new Set();
 
@@ -65,7 +65,7 @@ window.__ModuleLoader__.load({
 
     /** The build this client is. Shown in the footer so it is never a guess
      *  which version a window is running. */
-    const CLIENT_BUILD = '0.5.3';
+    const CLIENT_BUILD = '0.5.4';
 
     let tabSeq = 0;
 
@@ -241,6 +241,7 @@ window.__ModuleLoader__.load({
         centerColumn: box(center),
         centerPadding: center === null ? null : getComputedStyle(center).paddingRight,
         mode: runtime.mode,
+        suspended: runtime.suspended === true,
         visible: runtime.visible,
         owner: runtime.owner,
         panelContents: runtime.owner === null ? null : (() => {
@@ -339,6 +340,7 @@ window.__ModuleLoader__.load({
       const owner = runtime.owner;
       const state = owner === null ? undefined : sessionStates.get(owner);
       const showing = runtime.visible === true
+        && runtime.suspended !== true
         && state !== undefined
         && (state.tabs.length > 0 || state.notice !== null || state.pending !== null || state.tab !== 'preview');
       const existing = document.getElementById(LAYOUT_ROOM_ID);
@@ -1759,22 +1761,17 @@ body[data-ds-dark-theme] .dfp-root {
       const sessionId = props.sessionId;
       const ctx = props.__ctx;
       const docked = runtime.mode === 'overlay';
-      // A slide-over must never feel stuck: clicking anywhere outside it, or
-      // pressing Escape, puts the panel away.
+      // A slide-over stays where it was put: opening a file, clicking a tool
+      // call, reading another tab must never put it away. Escape is the one
+      // keyboard dismissal, and the panel is the operator's to close — with ✕,
+      // Escape or ⌥⌘F. Nothing on the page closes it behind their back.
       React.useEffect(() => {
         if (docked !== true) return undefined;
-        const onPointerDown = (event) => {
-          const node = ref.current;
-          if (node === null || node.contains(event.target) === true) return;
-          closePanel(ctx);
-        };
         const onKeyDown = (event) => {
           if (event.key === 'Escape') closePanel(ctx);
         };
-        window.addEventListener('pointerdown', onPointerDown, true);
         window.addEventListener('keydown', onKeyDown, true);
         return () => {
-          window.removeEventListener('pointerdown', onPointerDown, true);
           window.removeEventListener('keydown', onKeyDown, true);
         };
       }, [docked, ctx]);
@@ -1952,13 +1949,14 @@ body[data-ds-dark-theme] .dfp-root {
         if (runtime.visible !== true || runtime.owner === null) return;
         // The layout opens its details column when the app has a target of its
         // own — a tool call, a search result. The panel's seat would shadow the
-        // app's own panel there, so the panel steps aside instead. It never
-        // opens that column itself, so a column here always means "the app
-        // wants it".
+        // app's own panel there, so the panel stands down while that column is
+        // up and comes back the moment it closes. It never opens the column
+        // itself, so a column here always means "the app wants it".
         if (detailsColumnWidth() >= 300) {
-          closePanel(ctx);
+          suspendPanel(ctx);
           return;
         }
+        if (runtime.suspended === true) resumePanel(ctx);
         if (runtime.mode !== 'overlay') {
           runtime.mode = 'overlay';
           notify();
@@ -1995,33 +1993,43 @@ body[data-ds-dark-theme] .dfp-root {
 
     /** Pick the host this window can actually render, and switch live on resize. */
     function applyPanelHost(ctx, sessionId) {
-      // Decide from the column that is really there, before anything is
-      // mounted: a seat inside a 0px column paints a sliver of overflowing
-      // content at the window edge, and pushing the chat while DSH has already
-      // opened its own column squeezes the conversation twice.
-      runtime.mode = detailsColumnWidth() >= 300 ? 'column' : 'overlay';
+      // The panel always docks: a fixed surface on the right edge, drawn only
+      // while it is wanted. It never lives in the layout's details column —
+      // holding that column is how a file panel ends up standing in for the
+      // app's own panel. When the app has opened that column for something of
+      // its own, the panel stands down (and keeps every tab it had).
+      runtime.mode = 'overlay';
+      // The layout observer is what brings the dock back once the app puts its
+      // own panel away, so it is installed whether or not the dock is up.
+      watchLayout(ctx, sessionId);
+      if (detailsColumnWidth() >= 300) {
+        suspendPanel(ctx);
+        return;
+      }
+      runtime.suspended = false;
       mountSeat(ctx, sessionId);
       notify();
-      // After the first paint the real width is known: if the column handed us
-      // nothing, dock instead of holding an invisible seat.
-      window.requestAnimationFrame(() => {
-        if (runtime.visible !== true || runtime.owner !== sessionId) return;
-        if (detailsColumnWidth() >= 300) {
-          // The app is showing its own details panel: get out of its way.
-          closePanel(ctx);
-          return;
-        }
-        const root = document.querySelector('.dfp-root');
-        if (root === null) return;
-        const seatWidth = Math.round(root.getBoundingClientRect().width);
-        const column = detailsColumnWidth();
-        const want = column >= 300 && seatWidth >= 300 ? 'column' : 'overlay';
-        if (want !== runtime.mode) {
-          runtime.mode = want;
-          notify();
-        }
-        watchLayout(ctx, sessionId);
-      });
+    }
+
+    /**
+     * Stand down while the app's own details column is on screen: the panel's
+     * seat would shadow that panel. Nothing is thrown away — the tabs, the open
+     * file and the notes are all still there, and the dock comes back on its own
+     * when the column closes. Closing for good stays a decision the operator
+     * makes (✕, Escape or ⌥⌘F).
+     */
+    function suspendPanel(ctx) {
+      if (runtime.suspended === true) return;
+      runtime.suspended = true;
+      unmountSeatOnly();
+      notify();
+    }
+
+    function resumePanel(ctx) {
+      if (runtime.suspended !== true || runtime.visible !== true || runtime.owner === null) return;
+      runtime.suspended = false;
+      mountSeat(ctx, runtime.owner);
+      notify();
     }
 
     let dockDragging = false;
@@ -2420,6 +2428,7 @@ body[data-ds-dark-theme] .dfp-root {
 
     function closePanel(ctx) {
       runtime.visible = false;
+      runtime.suspended = false;
       unmountOverlay();
       unmountSeat();
       notify();
@@ -2478,6 +2487,11 @@ body[data-ds-dark-theme] .dfp-root {
     function togglePanel(ctx) {
       if (runtime.visible === true) closePanel(ctx);
       else showPanel(ctx, runtime.owner ?? currentSessionId(ctx));
+    }
+
+    /** Only ever true while the app's own details column is on screen. */
+    function panelSuspended() {
+      return runtime.suspended === true;
     }
 
     /** The slim tab that is the plugin's only resting UI. */
@@ -3002,6 +3016,10 @@ body[data-ds-dark-theme] .dfp-root {
         // A hot reload can take the park down with it; the preference is the
         // source of truth, so it is put back where it belongs.
         if (hideTurnRail === true && document.getElementById(RAIL_STYLE_ID) === null) applyTurnRailPreference();
+        // Standing down is temporary by definition: the moment the app takes its
+        // own panel away the dock is due back, whether or not a resize event
+        // bothered to arrive.
+        if (runtime.suspended === true && runtime.visible === true && detailsColumnWidth() < 300) resumePanel(ctx);
         if (runtime.visible !== true || runtime.owner === null) return;
         const sessionId = runtime.owner;
         const state = sessionState(sessionId);
@@ -3119,6 +3137,7 @@ body[data-ds-dark-theme] .dfp-root {
           const tab = activeTab(state);
           return {
             visible: runtime.visible,
+            suspended: runtime.suspended === true,
             owner: runtime.owner,
             sessionId: state.id,
             tab: state.tab,
@@ -3160,6 +3179,8 @@ body[data-ds-dark-theme] .dfp-root {
           dockRect: () => { const node = document.querySelector('.dfp-root[data-dock="true"]'); if (node === null) return null; const box = node.getBoundingClientRect(); return { x: Math.round(box.x), w: Math.round(box.width), h: Math.round(box.height) } },
           columnFits: () => columnFits(),
           dockWidth: () => runtime.dockWidth,
+          suspended: () => panelSuspended(),
+          detailsColumn: () => detailsColumnWidth(),
           haveOpener: () => originalOpenWorkspacePath !== null,
           primitives: () => primitives !== null,
           primitiveKeys: () => (primitives === null ? [] : Object.keys(primitives)),
