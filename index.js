@@ -19,7 +19,7 @@ import zlib from 'node:zlib'
 
 export const name = 'dsh-file-panel'
 /** Bumped per host revision; the health route reports it so a reload is provable. */
-export const BUILD = '0.5.5'
+export const BUILD = '0.6.0'
 export const inject = ['connection']
 
 const ROUTE_FILE = '/api/dsh-file-panel.file'
@@ -35,6 +35,7 @@ const ROUTE_RAW = '/api/dsh-file-panel.raw'
 const ROUTE_SEARCH = '/api/dsh-file-panel.search'
 const ROUTE_REVERT = '/api/dsh-file-panel.revert'
 const ROUTE_RESOLVE = '/api/dsh-file-panel.resolve'
+const ROUTE_CHAT = '/api/dsh-file-panel.chat'
 
 const MAX_INLINE_BYTES = 1_500_000
 const MAX_RAW_BYTES = 12 * 1024 * 1024
@@ -1168,6 +1169,54 @@ async function searchFileContents(root, query, limit) {
  * of a dead end.
  * @param {Request} request @param {import('@deepseek-ai/cordis').Context} ctx
  */
+/** Log event types that carry a user turn, across harness revisions. */
+const USER_MESSAGE_TYPES = new Set(['user/message', 'message/user', 'input-message', 'user-message', 'prompt/user'])
+
+/** Flatten a message body into plain text. */
+function messageText(content) {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+  return content
+    .map((block) => (typeof block === 'string' ? block : typeof block?.text === 'string' ? block.text : ''))
+    .filter((part) => part.length > 0)
+    .join('\n')
+}
+
+/**
+ * The session's own conversation, as the log has it: every user turn with the
+ * sequence number the fork API needs. The panel does not guess any of this from
+ * the rendered page — the log is what the harness actually ran.
+ * @param {unknown} ctx @param {string} sessionId
+ */
+async function handleChat(ctx, sessionId) {
+  const events = await loadSessionEventsFromQuery(ctx, sessionId, () => {})
+  const counts = new Map()
+  const messages = []
+  const samples = []
+  for (const event of events) {
+    const type = typeof event?.type === 'string' ? event.type : 'unknown'
+    counts.set(type, (counts.get(type) ?? 0) + 1)
+    if (samples.length < 3 && /message|prompt|input/i.test(type) === true) samples.push(JSON.stringify(event).slice(0, 700))
+    if (USER_MESSAGE_TYPES.has(type) !== true) continue
+    const data = event?.data ?? {}
+    const text = messageText(data.content ?? data.text ?? data.message?.content ?? '')
+    messages.push({
+      seq: typeof event.seq === 'number' ? event.seq : null,
+      time: typeof event.time === 'number' ? event.time : null,
+      turn: typeof data.turn === 'number' ? data.turn : null,
+      messageId: typeof data.messageId === 'string' ? data.messageId : null,
+      text
+    })
+  }
+  return ok({
+    sessionId,
+    events: events.length,
+    types: Object.fromEntries([...counts.entries()].sort((a, b) => b[1] - a[1])),
+    samples,
+    messages
+  })
+}
+
 async function handleResolve(request, ctx) {
   const url = new URL(request.url)
   const cwd = url.searchParams.get('cwd')
@@ -1364,7 +1413,8 @@ export function apply(ctx) {
     [ROUTE_RAW, ['GET'], guard((request) => handleRaw(request))],
     [ROUTE_SEARCH, ['GET'], guard((request) => handleSearch(request))],
     [ROUTE_REVERT, ['POST'], guard((request) => handleRevert(request))],
-    [ROUTE_RESOLVE, ['GET'], guard((request) => handleResolve(request, ctx))]
+    [ROUTE_RESOLVE, ['GET'], guard((request) => handleResolve(request, ctx))],
+    [ROUTE_CHAT, ['GET'], guard((request) => handleChat(ctx, new URL(request.url).searchParams.get('sessionId') ?? ''))]
   ]
   for (const [routePath, methods, fetch] of routes) {
     connection.fetch.register({ path: routePath, methods, fetch })

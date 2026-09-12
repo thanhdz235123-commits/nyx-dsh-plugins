@@ -65,7 +65,7 @@ window.__ModuleLoader__.load({
 
     /** The build this client is. Shown in the footer so it is never a guess
      *  which version a window is running. */
-    const CLIENT_BUILD = '0.5.5';
+    const CLIENT_BUILD = '0.6.0';
 
     let tabSeq = 0;
 
@@ -2372,6 +2372,353 @@ body[data-ds-dark-theme] .dfp-root {
       for (const node of document.querySelectorAll('[data-dfp-path="1"]')) node.removeAttribute('data-dfp-path');
     }
 
+    // ------------------------------------------------------------------
+    // edit & resend — a sent message can be rewritten. DSH's log is
+    // append-only, so "resend" means what it means in DSH: branch the session
+    // from the turn *before* that message and send the edited text into the
+    // branch. Nothing is written into the app's DOM: the affordance is our own
+    // overlay, and the app is only asked through its public session service.
+    // ------------------------------------------------------------------
+    const CHAT_EDIT_HOST_ID = 'dsh-file-panel-chat-edit';
+    const CHAT_EDIT_BUTTON_ID = 'dsh-file-panel-edit-button';
+    const CHAT_EDIT_CARD_ID = 'dsh-file-panel-edit-card';
+    const CHAT_EDIT_MOVE_MS = 80;
+    const CHAT_EDIT_PROMPT_MODE = 'queue';
+
+    let chatEditEnabled = true;
+    let chatEditHost = null;
+    let chatEditButton = null;
+    let chatEditCard = null;
+    let chatEditArea = null;
+    let chatEditStatus = null;
+    let chatEditTarget = null;
+    let chatEditBusy = false;
+    let chatEditLastMove = 0;
+    let chatEditInstalled = false;
+    let chatEditSendHook = null;
+    let chatEditMoveHandler = null;
+    let chatEditScrollHandler = null;
+
+    function chatEditRows() {
+      return [...document.querySelectorAll('[data-chat-flow-kind="user"]')];
+    }
+
+    function chatEditRowOf(node) {
+      if (node instanceof Element !== true) return null;
+      return node.closest('[data-chat-flow-kind="user"]');
+    }
+
+    /** `13:input-message<id>` — the sequence number the fork API wants. */
+    function chatEditSeqOf(row) {
+      const key = row?.getAttribute?.('data-chat-anchor-key') ?? '';
+      const match = /^(\d+):/.exec(key);
+      return match === null ? null : Number(match[1]);
+    }
+
+    function chatEditBubbleOf(row) {
+      return row?.querySelector?.('[class*="bubble"]') ?? null;
+    }
+
+    function chatEditTextOf(row) {
+      const bubble = chatEditBubbleOf(row) ?? row;
+      return String(bubble?.innerText ?? '').trim();
+    }
+
+    /**
+     * The chat node's own sequence (13 in `13:input-message<id>`) belongs to the
+     * chat projection, not to the session log — and `fork` speaks the log's
+     * sequence. The host is asked for the log, and rows are aligned from the
+     * newest one backwards, so a partially loaded transcript still matches.
+     */
+    let chatEditMessages = { sessionId: null, at: 0, list: null };
+
+    async function chatEditLog(sessionId) {
+      if (sessionId === null || sessionId === undefined) return null;
+      const fresh = chatEditMessages.sessionId === sessionId && Date.now() - chatEditMessages.at < 5000;
+      if (fresh === true) return chatEditMessages.list;
+      const value = await callHost('chat', { sessionId }).catch(() => null);
+      const list = Array.isArray(value?.messages) ? value.messages : null;
+      chatEditMessages = { sessionId, at: Date.now(), list };
+      return list;
+    }
+
+    /** Resolve the row to the log entry it came from, and to its fork point. */
+    async function chatEditResolve(row) {
+      const rows = chatEditRows();
+      const index = rows.indexOf(row);
+      if (index < 0) return null;
+      const fromEnd = rows.length - 1 - index;
+      const sessionId = panelContext === null ? null : currentSessionId(panelContext);
+      const list = await chatEditLog(sessionId);
+      if (list === null || list.length <= fromEnd) return null;
+      const position = list.length - 1 - fromEnd;
+      const entry = list[position];
+      const previous = position > 0 ? list[position - 1] : null;
+      return {
+        seq: entry.seq ?? null,
+        forkAt: previous === null ? null : previous.seq ?? null,
+        logText: typeof entry.text === 'string' ? entry.text : '',
+        index: position
+      };
+    }
+
+    function chatEditHostNode() {
+      if (typeof document === 'undefined' || document.body === null) return null;
+      if (chatEditHost !== null && chatEditHost.isConnected === true) return chatEditHost;
+      const host = document.createElement('div');
+      host.id = CHAT_EDIT_HOST_ID;
+      host.dataset.plugin = 'dsh-file-panel';
+      host.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:2147482000';
+      document.body.appendChild(host);
+      chatEditHost = host;
+      return host;
+    }
+
+    function chatEditHideButton() {
+      if (chatEditButton !== null) chatEditButton.style.display = 'none';
+    }
+
+    function chatEditPlaceButton(row) {
+      const host = chatEditHostNode();
+      if (host === null) return;
+      if (chatEditButton === null) {
+        const button = document.createElement('button');
+        button.id = CHAT_EDIT_BUTTON_ID;
+        button.type = 'button';
+        button.title = 'Sửa tin nhắn rồi gửi lại (tạo nhánh mới)';
+        button.textContent = '✎';
+        button.style.cssText = 'position:absolute;pointer-events:auto;appearance:none;border:none;border-radius:6px;width:22px;height:22px;line-height:1;font-size:12px;cursor:pointer;background:var(--dsw-alias-bg-module-platform, rgba(40,40,46,.92));color:var(--dsw-alias-label-secondary, #b9bac2);box-shadow:0 1px 4px rgba(0,0,0,.35)';
+        button.addEventListener('mouseenter', () => { button.style.color = 'var(--dsw-alias-label-primary, #fff)' });
+        button.addEventListener('mouseleave', () => { button.style.color = 'var(--dsw-alias-label-secondary, #b9bac2)' });
+        button.addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          void chatEditBegin(chatEditRowOf(event.target) ?? row);
+        });
+        host.appendChild(button);
+        chatEditButton = button;
+      }
+      const bubble = chatEditBubbleOf(row);
+      const actions = row.querySelector('[class*="actions"]');
+      const box = (bubble ?? row).getBoundingClientRect();
+      const actionBox = actions === null ? null : actions.getBoundingClientRect();
+      const anchor = actionBox !== null && actionBox.width > 0 ? actionBox : box;
+      chatEditButton.style.left = `${Math.max(4, Math.round(anchor.left - 26))}px`;
+      chatEditButton.style.top = `${Math.round(anchor.top + Math.max(0, (anchor.height - 22) / 2))}px`;
+      chatEditButton.style.display = 'block';
+      chatEditButton.dataset.row = String(chatEditSeqOf(row) ?? '');
+    }
+
+    function chatEditSetStatus(text) {
+      if (chatEditStatus !== null) chatEditStatus.textContent = text ?? '';
+    }
+
+    function closeChatEditor() {
+      chatEditTarget = null;
+      if (chatEditCard !== null) {
+        chatEditCard.remove();
+        chatEditCard = null;
+        chatEditArea = null;
+        chatEditStatus = null;
+      }
+      chatEditHideButton();
+    }
+
+    async function chatEditBegin(row) {
+      if (chatEditEnabled !== true || row === null) return null;
+      const host = chatEditHostNode();
+      if (host === null) return null;
+      const seq = chatEditSeqOf(row);
+      const text = chatEditTextOf(row);
+      if (text.length === 0) return null;
+      const resolved = await chatEditResolve(row);
+      chatEditTarget = {
+        row,
+        seq: resolved?.seq ?? seq,
+        nodeSeq: seq,
+        forkAt: resolved === null ? null : resolved.forkAt,
+        resendable: resolved !== null,
+        turn: row.getAttribute('data-chat-turn') ?? null,
+        text,
+        cwd: sessionFacts(panelContext ?? { get: () => undefined }).cwd ?? null
+      };
+      if (chatEditCard !== null) {
+        chatEditCard.remove();
+        chatEditCard = null;
+      }
+      const card = document.createElement('div');
+      card.id = CHAT_EDIT_CARD_ID;
+      card.dataset.plugin = 'dsh-file-panel';
+      card.style.cssText = 'position:absolute;pointer-events:auto;width:min(460px, 46vw);display:flex;flex-direction:column;gap:8px;padding:10px 12px;border-radius:12px;background:var(--dsw-alias-bg-layer-2, #1a1b20);border:.5px solid var(--dsw-alias-border-l2, rgba(128,128,128,.35));box-shadow:0 12px 32px rgba(0,0,0,.45);color:var(--dsw-alias-label-primary, inherit);font-size:13px';
+
+      const head = document.createElement('div');
+      head.style.cssText = 'display:flex;align-items:center;gap:8px;font-weight:600';
+      head.textContent = `Sửa tin nhắn${chatEditTarget.turn === null ? '' : ` · lượt ${chatEditTarget.turn}`}`;
+      card.appendChild(head);
+
+      const area = document.createElement('textarea');
+      area.value = text;
+      area.rows = 5;
+      area.style.cssText = 'width:100%;box-sizing:border-box;resize:vertical;min-height:96px;max-height:40vh;padding:8px 9px;border-radius:8px;background:var(--dsw-alias-bg-layer-1, #131418);color:inherit;border:.5px solid var(--dsw-alias-border-l2, rgba(128,128,128,.35));font:inherit;font-size:13px;line-height:1.45';
+      area.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') { event.preventDefault(); closeChatEditor(); return }
+        if (event.key === 'Enter' && (event.metaKey === true || event.ctrlKey === true)) {
+          event.preventDefault();
+          void submitChatEdit();
+        }
+      });
+      card.appendChild(area);
+
+      const hint = document.createElement('div');
+      hint.style.cssText = 'color:var(--dsw-alias-label-tertiary, rgba(160,160,170,.9));font-size:11.5px;line-height:1.5';
+      hint.textContent = chatEditTarget.resendable !== true
+        ? 'Không đọc được nhật ký phiên này, nên chưa xác định được mốc tách nhánh.'
+        : chatEditTarget.forkAt === null
+          ? 'Đây là tin nhắn đầu tiên: DSH mở một phiên mới trong cùng thư mục rồi gửi bản đã sửa.'
+          : 'Gửi lại sẽ tạo một nhánh mới: giữ lịch sử tới tin nhắn trước đó, rồi gửi bản đã sửa vào nhánh.';
+      card.appendChild(hint);
+
+      const rowBar = document.createElement('div');
+      rowBar.style.cssText = 'display:flex;align-items:center;gap:6px;justify-content:flex-end';
+      const status = document.createElement('span');
+      status.style.cssText = 'margin-right:auto;color:var(--dsw-alias-label-tertiary, rgba(160,160,170,.9));font-size:11.5px';
+      const cancel = document.createElement('button');
+      cancel.type = 'button';
+      cancel.textContent = 'Hủy';
+      cancel.style.cssText = 'appearance:none;border:.5px solid var(--dsw-alias-border-l2, rgba(128,128,128,.35));background:transparent;color:inherit;border-radius:8px;padding:5px 10px;font:inherit;font-size:12px;cursor:pointer';
+      cancel.addEventListener('click', (event) => { event.preventDefault(); closeChatEditor() });
+      const send = document.createElement('button');
+      send.type = 'button';
+      send.textContent = 'Gửi lại';
+      send.style.cssText = 'appearance:none;border:none;border-radius:8px;padding:5px 12px;font:inherit;font-size:12px;font-weight:600;cursor:pointer;background:var(--dsw-alias-brand-primary, #4d6bfe);color:#fff';
+      send.addEventListener('click', (event) => { event.preventDefault(); void submitChatEdit() });
+      rowBar.append(status, cancel, send);
+      card.appendChild(rowBar);
+
+      host.appendChild(card);
+      chatEditCard = card;
+      chatEditArea = area;
+      chatEditStatus = status;
+
+      const box = (chatEditBubbleOf(row) ?? row).getBoundingClientRect();
+      const width = Math.min(460, Math.max(280, Math.round(window.innerWidth * 0.46)));
+      const left = Math.max(12, Math.min(window.innerWidth - width - 12, Math.round(box.left)));
+      const top = Math.max(12, Math.min(window.innerHeight - 220, Math.round(box.bottom + 8)));
+      card.style.left = `${left}px`;
+      card.style.top = `${top}px`;
+      area.focus();
+      area.setSelectionRange(area.value.length, area.value.length);
+      reportChatEdit('open', { seq, forkAt: chatEditTarget.forkAt, turn: chatEditTarget.turn });
+      return chatEditTarget;
+    }
+
+    function reportChatEdit(step, extra) {
+      if (panelContext === null) return;
+      void postHost('diag', { reason: 'chat-edit', build: CLIENT_BUILD, step, ...extra }).catch(() => {});
+    }
+
+    function waitForBinding(ctx, sessionId, timeoutMs) {
+      return new Promise((resolve) => {
+        const started = Date.now();
+        const tick = () => {
+          const binding = ctx.sessions?.binding?.(sessionId);
+          if (binding?.session?.prompt !== undefined) { resolve(binding); return }
+          if (Date.now() - started > timeoutMs) { resolve(null); return }
+          window.setTimeout(tick, 120);
+        };
+        tick();
+      });
+    }
+
+    async function submitChatEdit() {
+      const target = chatEditTarget;
+      if (target === null || chatEditBusy === true || panelContext === null) return;
+      const text = String(chatEditArea?.value ?? '').trim();
+      if (text.length === 0) { chatEditSetStatus('Tin nhắn trống'); return }
+      if (target.resendable !== true) { chatEditSetStatus('Chưa xác định được mốc tách nhánh'); return }
+      const ctx = panelContext;
+      const sessionId = currentSessionId(ctx);
+      if (sessionId === null || sessionId === undefined) { chatEditSetStatus('Không xác định được phiên'); return }
+      chatEditBusy = true;
+      chatEditSetStatus('Đang tạo nhánh…');
+      try {
+        let targetSession = sessionId;
+        if (target.forkAt !== null) {
+          const childId = await ctx.sessions.fork({ sessionId, atSeq: target.forkAt, increaseTitle: true });
+          if (typeof childId !== 'string' || childId.length === 0) throw new Error('fork không trả về phiên mới');
+          targetSession = childId;
+        } else {
+          const created = await ctx.sessions.create({ cwd: target.cwd });
+          targetSession = typeof created === 'string' ? created : created?.sessionId ?? created?.id ?? null;
+          if (typeof targetSession !== 'string' || targetSession.length === 0) throw new Error('không tạo được phiên mới');
+        }
+        reportChatEdit('forked', { seq: target.seq, forkAt: target.forkAt, child: targetSession });
+        ctx.sessions.open(targetSession);
+        const binding = await waitForBinding(ctx, targetSession, 8000);
+        if (binding === null) throw new Error('phiên mới chưa sẵn sàng');
+        chatEditSetStatus('Đang gửi…');
+        const send = chatEditSendHook ?? ((session, payload) => session.prompt(payload, CHAT_EDIT_PROMPT_MODE));
+        const result = await send(binding.session, [{ type: 'text', text }]);
+        if (result?.ok === false) throw new Error(result?.error?.message ?? 'prompt bị từ chối');
+        chatEditSetStatus('Đã gửi vào nhánh mới');
+        reportChatEdit('sent', { seq: target.seq, child: targetSession, chars: text.length });
+        closeChatEditor();
+      } catch (error) {
+        chatEditSetStatus(`Không gửi được: ${error?.message ?? error}`);
+        reportChatEdit('failed', { seq: target.seq, message: String(error?.message ?? error).slice(0, 200) });
+      } finally {
+        chatEditBusy = false;
+      }
+    }
+
+    function chatEditHoverAt(x, y) {
+      if (chatEditEnabled !== true) return null;
+      const node = document.elementFromPoint(x, y);
+      const row = chatEditRowOf(node);
+      if (row === null) return null;
+      chatEditPlaceButton(row);
+      return row;
+    }
+
+    function installChatEdit(ctx) {
+      if (typeof document === 'undefined' || chatEditInstalled === true) return chatEditInstalled;
+      chatEditHostNode();
+      const onMove = (event) => {
+        if (chatEditEnabled !== true) return;
+        const now = Date.now();
+        if (now - chatEditLastMove < CHAT_EDIT_MOVE_MS) return;
+        chatEditLastMove = now;
+        if (chatEditCard !== null) return;
+        const row = chatEditRowOf(event.target);
+        if (row === null) { chatEditHideButton(); return }
+        chatEditPlaceButton(row);
+      };
+      const onScroll = () => { if (chatEditCard === null) chatEditHideButton(); };
+      document.addEventListener('mousemove', onMove, true);
+      window.addEventListener('scroll', onScroll, true);
+      chatEditMoveHandler = onMove;
+      chatEditScrollHandler = onScroll;
+      chatEditInstalled = true;
+      void ctx;
+      return true;
+    }
+
+    function uninstallChatEdit() {
+      if (chatEditInstalled !== true) return false;
+      if (chatEditMoveHandler !== null) document.removeEventListener('mousemove', chatEditMoveHandler, true);
+      if (chatEditScrollHandler !== null) window.removeEventListener('scroll', chatEditScrollHandler, true);
+      chatEditMoveHandler = null;
+      chatEditScrollHandler = null;
+      closeChatEditor();
+      if (chatEditHost !== null) {
+        chatEditHost.remove();
+        chatEditHost = null;
+        chatEditButton = null;
+      }
+      chatEditInstalled = false;
+      return true;
+    }
+
     let lastOpenerReport = 0;
 
     function reportOpener(target, took) {
@@ -3125,6 +3472,11 @@ body[data-ds-dark-theme] .dfp-root {
           } catch {
             /* already gone */
           }
+          try {
+            uninstallChatEdit();
+          } catch {
+            /* already gone */
+          }
           sweepStrays();
         }
       };
@@ -3141,6 +3493,7 @@ body[data-ds-dark-theme] .dfp-root {
       const wrapped = installOpenerInterceptor(ctx);
       if (wrapped !== true) console.warn('[dsh-file-panel] opener not wrapped; file links keep opening externally');
       installPathClicker(ctx);
+      installChatEdit(ctx);
       syncDockLayout();
       watchSessions(ctx);
       startPolling(ctx);
@@ -3235,6 +3588,23 @@ body[data-ds-dark-theme] .dfp-root {
             return clickPaths;
           },
           markedPaths: () => document.querySelectorAll('[data-dfp-path="1"]').length,
+          chatEdit: () => ({
+            enabled: chatEditEnabled,
+            installed: chatEditInstalled,
+            rows: chatEditRows().map((row) => ({ seq: chatEditSeqOf(row), turn: row.getAttribute('data-chat-turn'), text: chatEditTextOf(row).slice(0, 70) })),
+            open: chatEditTarget === null ? null : { seq: chatEditTarget.seq, forkAt: chatEditTarget.forkAt, turn: chatEditTarget.turn, text: chatEditTarget.text.slice(0, 70) },
+            busy: chatEditBusy,
+            button: chatEditButton !== null && chatEditButton.isConnected === true
+          }),
+          chatEditEnable: (value) => { chatEditEnabled = value !== false; if (chatEditEnabled !== true) closeChatEditor(); return chatEditEnabled },
+          chatEditHoverAt: (x, y) => { const row = chatEditHoverAt(x, y); return row === null ? null : (chatEditSeqOf(row) ?? null) },
+          chatEditBegin: async (index) => { const rows = chatEditRows(); const row = rows[index ?? rows.length - 1] ?? null; const target = await chatEditBegin(row); return target === null ? null : { seq: target.seq, nodeSeq: target.nodeSeq, forkAt: target.forkAt, turn: target.turn, resendable: target.resendable }; },
+          chatEditLog: () => (chatEditMessages.list ?? []).map((entry) => ({ seq: entry.seq, text: String(entry.text ?? '').slice(0, 60) })),
+          chatEditSetText: (text) => { if (chatEditArea === null) return false; chatEditArea.value = text; return true },
+          chatEditStatus: () => chatEditStatus === null ? null : String(chatEditStatus.textContent ?? ''),
+          chatEditSubmit: () => { void submitChatEdit(); return true },
+          chatEditClose: () => { closeChatEditor(); return true },
+          chatEditStub: (fn) => { chatEditSendHook = typeof fn === 'function' ? fn : null; return chatEditSendHook !== null },
           pathClicker: () => pathClickHandler !== null,
           pathCandidate: (x, y) => {
             const node = document.elementFromPoint(x, y);
