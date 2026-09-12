@@ -3,22 +3,34 @@
   "version": "0.6.3",
   "description": "Antigravity-style in-app file panel for DeepSeek Harness: file links open a right-side preview / diff / editor column instead of the OS default app.",
   "type": "module",
-  "main": "./index.js",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "types": "./lib/types/client/index.d.ts",
+      "default": "./lib/client.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
   "bin": {
     "dsh-file-panel": "./bin/dsh-file-panel.mjs"
   },
-  "exports": {
-    ".": "./index.js",
-    "./client": "./client.js",
-    "./package.json": "./package.json"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/thanhdz235123-commits/dsh-file-panel.git"
-  },
-  "homepage": "https://github.com/thanhdz235123-commits/dsh-file-panel#readme",
-  "bugs": {
-    "url": "https://github.com/thanhdz235123-commits/dsh-file-panel/issues"
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "bin",
+    "docs",
+    "README.md",
+    "README.vn.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
   },
   "keywords": [
     "dsh",
@@ -30,8 +42,16 @@
   ],
   "author": "dsh-file-panel contributors",
   "license": "MIT",
-  "engines": {
-    "node": ">=20"
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thanhdz235123-commits/dsh-file-panel.git"
+  },
+  "homepage": "https://github.com/thanhdz235123-commits/dsh-file-panel#readme",
+  "bugs": {
+    "url": "https://github.com/thanhdz235123-commits/dsh-file-panel/issues"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "dsh": {
     "bundle": {
@@ -51,16 +71,6 @@
     "@deepseek-ai/dsh-client-ui-primitives": "^0.1.2-rc.1",
     "@deepseek-ai/dsh-client-ui-slots": "^0.1.2-rc.1"
   },
-  "files": [
-    "index.js",
-    "client.js",
-    "cordis.patch.yml",
-    "bin/",
-    "docs/",
-    "README.md",
-    "README.vn.md",
-    "LICENSE"
-  ],
   "scripts": {
     "verify": "node tools/verify.mjs"
   }

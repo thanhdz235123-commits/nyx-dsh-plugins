@@ -230,6 +230,51 @@ artifacts, and code search from the same column — see the
 - **0.2.1** — live per-session diff index (seed once, then `session/event`), so panel reads stay O(1).
 - **0.2.0** — correct Zstandard frame walking, bounded/yielding log scans, canonical path matching, non-blocking client loads.
 
+## Package layout (DeepSeek Harness plugin format)
+
+This package is laid out the way DeepSeek Harness's own plugins are, so it installs,
+resolves and publishes the same way:
+
+```
+lib/index.js              host half   — export const name / inject, export function apply(ctx)
+lib/client.js             client half — window.__ModuleLoader__.load({ id, factory })
+lib/types/**/*.d.ts       type declarations for both halves
+cordis.patch.yml          the profile patch that inserts the plugin
+bin/                      the installer CLI
+tools/, docs/             development tools and documentation (not published)
+```
+
+`package.json` carries the contract the loader reads:
+
+```json
+{
+  "main": "lib/index.js",
+  "exports": { ".": {...}, "./client": { "default": "./lib/client.js" } },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": { "inject": [], "immediately": true, "platform": "web" }
+  }
+}
+```
+
+Two different lists, easy to confuse: `dsh.client.inject` names **packages** whose
+client bundles must load first, while the client module's own `inject` names the
+**cordis services** it needs at apply time.
+
+### Publishing
+
+```
+npm pack --dry-run     # check what ships
+npm publish --access public
+```
+
+Published, it installs into a profile either by adding its name to
+`dsh.profile.bundles` in the profile's `package.json`, or with the bundled installer:
+
+```
+npx dsh-file-panel install
+```
+
 ## License
 
 MIT
