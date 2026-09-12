@@ -1661,18 +1661,47 @@ body[data-ds-dark-theme] .dfp-root {
      * 640px centre must all fit, otherwise the column resolves to 0 and a seated
      * panel would render invisibly.
      */
-    function columnFits() {
+    /** Width of the layout's right column — 0 when the layout refuses it. */
+    function detailsColumnWidth() {
       const frame = document.querySelector('[data-shell-overlay]')?.parentElement ?? null;
-      const sidebar = frame === null ? 0 : Math.round(frame.children[0]?.getBoundingClientRect().width ?? 0);
-      return window.innerWidth >= sidebar + 940;
+      if (frame === null) return 0;
+      const widths = [...frame.children].map((child) => Math.round(child.getBoundingClientRect().width));
+      const details = widths[2];
+      return typeof details === 'number' && details > 0 ? details : 0;
     }
 
-    /**
-     * Dock mode keeps the same seat mount but pins the surface to the window, so
-     * the panel is usable at widths where the layout resolves the details column
-     * to 0 (its centre column demands 640px). The `shell.overlay` slot is not an
-     * option: it renders no entries in this build, verified with a probe.
-     */
+    function columnFits() {
+      // Measured, never predicted. A seat inside a collapsed column measures
+      // zero pixels: that is the layout telling us it refused the column, and a
+      // hand-rolled copy of DSH's column maths gets that wrong at some window
+      // sizes (a 0px column holding a mounted panel is exactly what "my UI is
+      // broken" looks like). A docked panel measures itself, so it must not be
+      // consulted — only the real column counts then.
+      const root = document.querySelector('.dfp-root');
+      const docked = root !== null && root.getAttribute('data-dock') === 'true';
+      if (root !== null && docked !== true) {
+        const width = Math.round(root.getBoundingClientRect().width);
+        if (width > 0) return width >= 300;
+      }
+      return detailsColumnWidth() >= 300;
+    }
+
+    let layoutObserver = null;
+
+    /** Flip between the column and the dock the moment the layout changes its
+     *  mind — on resize, on sidebar collapse, on anything. */
+    function watchLayout(ctx, sessionId) {
+      if (layoutObserver !== null) return;
+      const frame = document.querySelector('[data-shell-overlay]')?.parentElement ?? null;
+      if (frame === null) return;
+      layoutObserver = new ResizeObserver(() => {
+        if (runtime.visible !== true || runtime.owner === null) return;
+        const want = columnFits() ? 'column' : 'overlay';
+        if (want !== runtime.mode) applyPanelHost(ctx, runtime.owner);
+      });
+      for (const child of frame.children) layoutObserver.observe(child);
+    }
+
     function unmountOverlay() {
       /* dock mode lives inside the seat; nothing extra to tear down */
     }
@@ -1689,6 +1718,21 @@ body[data-ds-dark-theme] .dfp-root {
         mountSeat(ctx, sessionId);
       }
       notify();
+      // After the first paint the real width is known: if the column handed us
+      // nothing, dock instead of holding an invisible seat.
+      window.requestAnimationFrame(() => {
+        if (runtime.visible !== true || runtime.owner !== sessionId) return;
+        const root = document.querySelector('.dfp-root');
+        if (root === null) return;
+        const seatWidth = Math.round(root.getBoundingClientRect().width);
+        const column = detailsColumnWidth();
+        const want = column >= 300 || (runtime.mode === 'column' && seatWidth >= 300) ? 'column' : 'overlay';
+        if (want !== runtime.mode) {
+          runtime.mode = want;
+          notify();
+        }
+        watchLayout(ctx, sessionId);
+      });
     }
 
     let dockDragging = false;
@@ -2488,7 +2532,7 @@ body[data-ds-dark-theme] .dfp-root {
           }))
         }
       };
-      console.log('[dsh-file-panel] ready 0.3.7', { wrapped, primitives: primitives !== null });
+      console.log('[dsh-file-panel] ready 0.3.8', { wrapped, primitives: primitives !== null });
     }
 
     const inject = ['slots', 'sessions', 'layout', 'remote', 'remote.session'];

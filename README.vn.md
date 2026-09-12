@@ -169,6 +169,7 @@ accept/reject theo từng chunk (ở đây là revert), cả hai chế độ dif
 
 ## Changelog
 
+- **0.3.8** — panel không bao giờ vô hình. Việc nó chiếm cột phải hay dock giờ **đo thật** (độ rộng thật của cột), không đoán theo bản sao công thức chia cột của DSH: ở vài cỡ cửa sổ cột phải resolve về 0px, panel vẫn mount ở đó thành dải 0px mà vẫn giữ ghế — nhìn y như UI hỏng. `ResizeObserver` đổi qua lại giữa cột và dock ngay khi layout đổi ý.
 - **0.3.7** — không mở gì trừ khi nó có thật trên đĩa. Mọi đường vào (link chat, tool row, cây file, quick open, dòng review) đều `stat` trước: path không tồn tại bị từ chối kèm **đúng đường dẫn tuyệt đối đã thử** và **không tạo tab nào**, nên panel không bao giờ trông như đã mở một file không tồn tại. Link thư mục vẫn mở cây file. Host từ chối trả byte cho path thiếu (`404 not-found`) và từ chối mọi thứ không phải file thường.
 - **0.3.6** — surface `Edit` thành editor kiểu IDE: gutter số dòng cuộn theo text và sáng dòng đang đứng, band dòng hiện tại, `Ln, Col`, Tab = 2 spaces, Enter giữ indent, `Cmd-S` lưu có sha-guard, `Revert edits`.
 - **0.3.5** — link mở **đúng** path nó ghi. Cơ chế dò basename (và danh sách "chọn 1 trong các file giống tên") đã bị bỏ: link tới `<root>/index.js` mở đúng file đó hoặc báo không có, **không bao giờ** mở file cùng tên ở chỗ khác. Màn hình lỗi in ra đúng chuỗi link + đường dẫn tuyệt đối đã resolve, kèm nút `Search workspace` tự nguyện — không mở gì cho tới khi mày chọn. Route `resolve` phía host vẫn còn như API cho tooling; luồng link không còn gọi nó.
