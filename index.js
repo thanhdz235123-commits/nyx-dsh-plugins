@@ -13,12 +13,13 @@ import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { createReadStream, existsSync, readdirSync, promises as fsp } from 'node:fs'
 import { execFile } from 'node:child_process'
+import os from 'node:os'
 import path from 'node:path'
 import zlib from 'node:zlib'
 
 export const name = 'dsh-file-panel'
 /** Bumped per host revision; the health route reports it so a reload is provable. */
-export const BUILD = '0.5.2'
+export const BUILD = '0.5.3'
 export const inject = ['connection']
 
 const ROUTE_FILE = '/api/dsh-file-panel.file'
@@ -146,13 +147,20 @@ function languageOf(filePath) {
 
 /**
  * Resolve a caller-supplied path against the session workspace root.
+ * `~` is the caller's home directory on every platform — a path written in a
+ * message often is home-relative, and reading it as a workspace-relative name
+ * would point at a file that only looks similar. Nothing here searches: the
+ * result is the one path that was asked for, or an error.
  * @param {string | null} raw @param {string | null} cwd
  */
 function resolveRequestPath(raw, cwd) {
   if (typeof raw !== 'string' || raw.length === 0) throw failure2('bad-request', 'path is required')
   if (raw.includes('\u0000')) throw failure2('bad-request', 'path contains a NUL byte')
   const base = typeof cwd === 'string' && cwd.length > 0 ? cwd : process.cwd()
-  return path.normalize(path.isAbsolute(raw) ? raw : path.resolve(base, raw))
+  const expanded = raw === '~' || raw.startsWith('~/') || raw.startsWith('~\\')
+    ? path.join(os.homedir(), raw.slice(1))
+    : raw
+  return path.normalize(path.isAbsolute(expanded) ? expanded : path.resolve(base, expanded))
 }
 
 /** @param {string} absolute @param {string | null} cwd */

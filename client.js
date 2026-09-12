@@ -21,6 +21,7 @@ window.__ModuleLoader__.load({
 
     const STYLE_ID = 'dsh-file-panel-style';
     const DOCK_HOST_ID = 'dsh-file-panel-dock-host';
+    const LAYOUT_ROOM_ID = 'dsh-file-panel-room';
     const SEAT_PRIORITY = -1000;
     const POLL_INTERVAL_MS = 2000;
     const MAX_TABS = 12;
@@ -61,7 +62,7 @@ window.__ModuleLoader__.load({
 
     /** The build this client is. Shown in the footer so it is never a guess
      *  which version a window is running. */
-    const CLIENT_BUILD = '0.5.2';
+    const CLIENT_BUILD = '0.5.3';
 
     let tabSeq = 0;
 
@@ -304,10 +305,11 @@ window.__ModuleLoader__.load({
     /**
      * DSH's own turn navigator: the 28px rail of marks pinned to the right of
      * the conversation (`.MumKSa_frame` in ui-chat's TurnNavigator module). It
-     * is the app's UI, not the panel's, so the panel never touches it unless the
-     * operator asks for it.
+     * sits exactly where a file panel wants to live and it reads as clutter, so
+     * the panel parks it by default. One call brings it back:
+     *   window.__dshFilePanel.debug.hideTurnRail(false)
      */
-    let hideTurnRail = false;
+    let hideTurnRail = true;
 
     function applyTurnRailPreference() {
       if (typeof document === 'undefined') return;
@@ -319,23 +321,39 @@ window.__ModuleLoader__.load({
       if (existing !== null) return;
       const style = document.createElement('style');
       style.id = 'dfp-hide-turn-rail';
-      style.textContent = '[class*="MumKSa_frame"]{display:none !important}';
+      style.textContent = '[class*="MumKSa_frame"],[class*="MumKSa_slot"]{display:none !important}';
       document.head.appendChild(style);
     }
 
-    /** Publish the docked state to the document so the layout can make room. */
+    /**
+     * A docked panel sits on top of the conversation's right edge, so while it
+     * is up the conversation gives it room. Nothing is written to DSH's DOM: one
+     * rule, scoped to the column that already owns that space, removed the
+     * moment the panel closes.
+     */
     function syncDockLayout() {
       if (typeof document === 'undefined' || document.body === null) return;
       const owner = runtime.owner;
       const state = owner === null ? undefined : sessionStates.get(owner);
       const showing = runtime.visible === true
-        && runtime.mode === 'overlay'
         && state !== undefined
         && (state.tabs.length > 0 || state.notice !== null || state.pending !== null || state.tab !== 'preview');
-      // The panel is a guest: it draws itself and touches nothing the layout
-      // owns. No body attributes, no padding on DSH's columns, no hiding of
-      // DSH elements — those are the changes that can break somebody's UI.
-      void showing;
+      const existing = document.getElementById(LAYOUT_ROOM_ID);
+      const room = showing === true ? pushWidth() : 0;
+      if (room <= 0) {
+        if (existing !== null) existing.remove();
+        return;
+      }
+      if (existing !== null) {
+        if (existing.dataset.room === String(room)) return;
+        existing.remove();
+      }
+      const style = document.createElement('style');
+      style.id = LAYOUT_ROOM_ID;
+      style.dataset.plugin = 'dsh-file-panel';
+      style.dataset.room = String(room);
+      style.textContent = `[class*="centerCol"]{padding-right:${room}px}`;
+      document.head.appendChild(style);
     }
 
     function activeTab(state) {
@@ -557,6 +575,10 @@ body[data-ds-dark-theme] .dfp-root {
 .dfp-dock-handle { position:absolute; left:-4px; top:0; bottom:0; width:8px; z-index:2; cursor:col-resize; background:transparent; touch-action:none; pointer-events:auto; border-radius:4px; }
 .dfp-root[data-dock="true"] { overflow:visible; }
 .dfp-dock-handle:hover { background:var(--dsw-alias-brand-primary,#4d6bfe); opacity:.4; }
+/* A path in the conversation is a door: the plugin reads the token under the
+   pointer, so the code spans that really are paths say so. */
+[data-dfp-path="1"] { cursor:pointer; text-decoration:underline dotted; text-decoration-thickness:1px; text-underline-offset:2px; }
+[data-dfp-path="1"]:hover { background:var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,.18)); }
 `
       document.head.appendChild(style);
     }
@@ -2161,6 +2183,160 @@ body[data-ds-dark-theme] .dfp-root {
       }
     }
 
+    /**
+     * The other half of "click a file and it opens": DSH only makes the chip on
+     * a tool row clickable, so a path written in a message is inert text. The
+     * panel makes a path anywhere in the conversation clickable by reading the
+     * token under the pointer, resolving it exactly as written — no search, no
+     * basename matching — and handing it to the same on-disk gate as every other
+     * entry point. A path that is not there opens nothing and says so.
+     */
+    let clickPaths = true;
+    let pathClickHandler = null;
+    let pathMarkerTimer = 0;
+
+    const PATH_BREAK = /[\s"'`<>|()[\]{}]/;
+    const PATH_MARK_INTERVAL_MS = 1200;
+    const PATH_MARK_LIMIT = 1200;
+
+    /** A token worth trying: absolute, home-relative, or carrying an extension. */
+    function looksLikePath(value) {
+      const text = String(value ?? '').trim();
+      if (text.length < 2 || text.length > 400) return false;
+      if (/^[a-z][a-z0-9+.-]*:\/\//i.test(text)) return false;
+      if (/^\d+([.,]\d+)?[/\\]\d+([.,]\d+)?$/.test(text)) return false;
+      if (/\s{2,}/.test(text) === true) return false;
+      const absolute = /^([/\\]|~|[a-zA-Z]:[/\\])/.test(text);
+      const last = text.split(/[/\\]/).filter((part) => part.length > 0).pop() ?? '';
+      if (last.length === 0) return false;
+      if (absolute === true) return true;
+      return /\.[a-z0-9]{1,8}$/i.test(last);
+    }
+
+    function trimToken(raw) {
+      return String(raw ?? '')
+        .replace(/^[([{<"'`*_]+/, '')
+        .replace(/[)\]}>"'`*_,.;:!?]+$/, '')
+        .trim();
+    }
+
+    function tokenAround(text, offset) {
+      const start0 = Math.max(0, Math.min(offset, text.length));
+      let start = start0;
+      let end = start0;
+      while (start > 0 && PATH_BREAK.test(text[start - 1]) !== true) start -= 1;
+      while (end < text.length && PATH_BREAK.test(text[end]) !== true) end += 1;
+      return text.slice(start, end);
+    }
+
+    /** The path the pointer is actually on, or null. */
+    function pathCandidateAt(event, target) {
+      const code = target.closest('code');
+      if (code !== null) {
+        const whole = trimToken(String(code.textContent ?? '').replace(/\s+/g, ' '));
+        if (whole.length > 0 && /\s/.test(whole) !== true && looksLikePath(whole) === true) return { path: whole, source: 'code' };
+        // A code span may hold a path with spaces ("/Users/me/Code /Python/a.js").
+        // Only when it opens like a path, never for a command line.
+        if (/^([/\\]|~|\.\.?[/\\]|[a-zA-Z]:[/\\])/.test(whole) === true && whole.length <= 400 && /\s/.test(whole) === true) return { path: whole, source: 'code-space' };
+      }
+      const doc = target.ownerDocument;
+      const position = typeof doc.caretPositionFromPoint === 'function' ? doc.caretPositionFromPoint(event.clientX, event.clientY) : null;
+      let node = position?.offsetNode ?? null;
+      let offset = position?.offset ?? 0;
+      if (node === null && typeof doc.caretRangeFromPoint === 'function') {
+        const range = doc.caretRangeFromPoint(event.clientX, event.clientY);
+        node = range?.startContainer ?? null;
+        offset = range?.startOffset ?? 0;
+      }
+      if (node === null || node.nodeType !== 3) return null;
+      const token = trimToken(tokenAround(String(node.textContent ?? ''), offset));
+      if (looksLikePath(token) !== true) return null;
+      return { path: token, source: 'text' };
+    }
+
+    /** Would a click here be ours to take? */
+    function pathClickTarget(event, target) {
+      if (event.defaultPrevented === true || event.button !== 0) return null;
+      if (event.metaKey === true || event.ctrlKey === true || event.altKey === true || event.shiftKey === true) return null;
+      if (target.closest('.dfp-root, .dfp-dock, [data-dfp]') !== null) return null;
+      if (target.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"], a[href], button, [role="button"]') !== null) return null;
+      const selection = window.getSelection?.();
+      if (selection !== null && selection !== undefined && String(selection).trim().length > 0) return null;
+      return pathCandidateAt(event, target);
+    }
+
+    function installPathClicker(ctx) {
+      if (typeof document === 'undefined') return false;
+      if (pathClickHandler !== null) return true;
+      const handler = (event) => {
+        try {
+          if (clickPaths !== true || canShowPanel(ctx) !== true) return;
+          const target = event.target;
+          if (target instanceof Element !== true) return;
+          const candidate = pathClickTarget(event, target);
+          if (candidate === null) return;
+          const facts = sessionFacts(ctx);
+          if (facts.sessionId === null) return;
+          void postHost('diag', { reason: 'pathclick', build: CLIENT_BUILD, source: candidate.source, target: candidate.path.slice(0, 240) }).catch(() => {});
+          void openPath(ctx, candidate.path);
+        } catch (error) {
+          console.warn('[dsh-file-panel] path click failed:', error?.message ?? error);
+        }
+      };
+      document.addEventListener('click', handler, true);
+      pathClickHandler = handler;
+      startPathMarker();
+      return true;
+    }
+
+    function uninstallPathClicker() {
+      if (pathClickHandler === null) return false;
+      document.removeEventListener('click', pathClickHandler, true);
+      pathClickHandler = null;
+      stopPathMarker();
+      return true;
+    }
+
+    /** Dotted underline + pointer cursor on the code spans that are real paths. */
+    function markPathNodes() {
+      if (clickPaths !== true || typeof document === 'undefined') return 0;
+      const nodes = document.querySelectorAll('code');
+      const total = Math.min(nodes.length, PATH_MARK_LIMIT);
+      let marked = 0;
+      for (let index = 0; index < total; index += 1) {
+        const node = nodes[index];
+        const text = String(node.textContent ?? '').trim();
+        const hit = text.length > 1 && looksLikePath(text) === true;
+        if (hit === true) {
+          if (node.getAttribute('data-dfp-path') !== '1') node.setAttribute('data-dfp-path', '1');
+          marked += 1;
+        } else if (node.getAttribute('data-dfp-path') === '1') {
+          node.removeAttribute('data-dfp-path');
+        }
+      }
+      return marked;
+    }
+
+    function startPathMarker() {
+      if (pathMarkerTimer !== 0) return;
+      pathMarkerTimer = window.setInterval(() => {
+        try {
+          markPathNodes();
+        } catch {
+          /* the app is mid-render */
+        }
+      }, PATH_MARK_INTERVAL_MS);
+      markPathNodes();
+    }
+
+    function stopPathMarker() {
+      if (pathMarkerTimer !== 0) {
+        window.clearInterval(pathMarkerTimer);
+        pathMarkerTimer = 0;
+      }
+      for (const node of document.querySelectorAll('[data-dfp-path="1"]')) node.removeAttribute('data-dfp-path');
+    }
+
     let lastOpenerReport = 0;
 
     function reportOpener(target, took) {
@@ -2796,6 +2972,9 @@ body[data-ds-dark-theme] .dfp-root {
     function startPolling(ctx) {
       if (pollTimer !== null) return;
       pollTimer = window.setInterval(async () => {
+        // A hot reload can take the park down with it; the preference is the
+        // source of truth, so it is put back where it belongs.
+        if (hideTurnRail === true && document.getElementById('dfp-hide-turn-rail') === null) applyTurnRailPreference();
         if (runtime.visible !== true || runtime.owner === null) return;
         const sessionId = runtime.owner;
         const state = sessionState(sessionId);
@@ -2862,6 +3041,11 @@ body[data-ds-dark-theme] .dfp-root {
           } catch {
             /* already gone */
           }
+          try {
+            uninstallPathClicker();
+          } catch {
+            /* already gone */
+          }
           sweepStrays();
         }
       };
@@ -2877,6 +3061,8 @@ body[data-ds-dark-theme] .dfp-root {
       installLayoutYield(ctx);
       const wrapped = installOpenerInterceptor(ctx);
       if (wrapped !== true) console.warn('[dsh-file-panel] opener not wrapped; file links keep opening externally');
+      installPathClicker(ctx);
+      syncDockLayout();
       watchSessions(ctx);
       startPolling(ctx);
       window.addEventListener('keydown', (event) => {
@@ -2953,6 +3139,27 @@ body[data-ds-dark-theme] .dfp-root {
           layout: () => layoutService,
           setIntercept: (value) => { interceptEnabled = value === true },
           hideTurnRail: (value) => { hideTurnRail = value === true; applyTurnRailPreference(); return hideTurnRail; },
+          railPreference: () => hideTurnRail,
+          railHidden: () => document.getElementById('dfp-hide-turn-rail') !== null,
+          clickPaths: (value) => {
+            clickPaths = value !== false;
+            if (clickPaths === true) {
+              if (panelContext !== null) installPathClicker(panelContext);
+              startPathMarker();
+              markPathNodes();
+            } else {
+              stopPathMarker();
+            }
+            return clickPaths;
+          },
+          markedPaths: () => document.querySelectorAll('[data-dfp-path="1"]').length,
+          pathClicker: () => pathClickHandler !== null,
+          pathCandidate: (x, y) => {
+            const node = document.elementFromPoint(x, y);
+            if (node === null) return null;
+            const candidate = pathCandidateAt({ clientX: x, clientY: y, button: 0 }, node);
+            return candidate === null ? null : candidate;
+          },
           openPalette: (kind) => openPalette(ownerOrCurrent(), kind),
           setPaletteQuery: (text) => runPalette(ownerOrCurrent(), text),
           setFind: (text) => setFind(ownerOrCurrent(), text),
