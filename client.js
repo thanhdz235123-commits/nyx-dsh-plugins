@@ -301,6 +301,28 @@ window.__ModuleLoader__.load({
       }, 250);
     }
 
+    /**
+     * DSH's own turn navigator: the 28px rail of marks pinned to the right of
+     * the conversation (`.MumKSa_frame` in ui-chat's TurnNavigator module). It
+     * is the app's UI, not the panel's, so the panel never touches it unless the
+     * operator asks for it.
+     */
+    let hideTurnRail = false;
+
+    function applyTurnRailPreference() {
+      if (typeof document === 'undefined') return;
+      const existing = document.getElementById('dfp-hide-turn-rail');
+      if (hideTurnRail !== true) {
+        if (existing !== null) existing.remove();
+        return;
+      }
+      if (existing !== null) return;
+      const style = document.createElement('style');
+      style.id = 'dfp-hide-turn-rail';
+      style.textContent = '[class*="MumKSa_frame"]{display:none !important}';
+      document.head.appendChild(style);
+    }
+
     /** Publish the docked state to the document so the layout can make room. */
     function syncDockLayout() {
       if (typeof document === 'undefined' || document.body === null) return;
@@ -2845,6 +2867,7 @@ body[data-ds-dark-theme] .dfp-root {
       };
       ensureStyles();
       ensureToggleHost();
+      applyTurnRailPreference();
       panelContext = ctx; // eslint-disable-line no-unused-expressions
       // Ask the host what its paths look like; a Windows harness answers `\\`.
       void callHost('health', {}).then((value) => {
@@ -2929,6 +2952,7 @@ body[data-ds-dark-theme] .dfp-root {
           primitiveKeys: () => (primitives === null ? [] : Object.keys(primitives)),
           layout: () => layoutService,
           setIntercept: (value) => { interceptEnabled = value === true },
+          hideTurnRail: (value) => { hideTurnRail = value === true; applyTurnRailPreference(); return hideTurnRail; },
           openPalette: (kind) => openPalette(ownerOrCurrent(), kind),
           setPaletteQuery: (text) => runPalette(ownerOrCurrent(), text),
           setFind: (text) => setFind(ownerOrCurrent(), text),
