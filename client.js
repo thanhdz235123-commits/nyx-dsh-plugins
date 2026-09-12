@@ -174,6 +174,9 @@ window.__ModuleLoader__.load({
         // A link that is still being resolved: the panel shows exactly which
         // path was clicked while the host works out what it points at.
         pending: null,
+        // The last path that was refused because it is not on disk. Nothing is
+        // opened for it; the notice explains what was rejected and where.
+        notice: null,
         events: [],
         tree: {},
         expanded: {},
@@ -1429,6 +1432,39 @@ body[data-ds-dark-theme] .dfp-root {
       return parts.length >= 2 ? `${parts[parts.length - 2]}/${name}` : name;
     }
 
+    /**
+     * What the gate refused, and why. Rendered above every surface so a refused
+     * open is never mistaken for an empty file or a broken panel.
+     */
+    function OpenNotice({ state, sessionId }) {
+      const notice = state.notice;
+      if (notice === null) return null;
+      return React.createElement('div', { className: 'dfp-note', 'data-tone': 'error', 'data-kind': 'refused' },
+        React.createElement('div', { className: 'dfp-error-title' }, 'Not opened — that path is not on disk'),
+        React.createElement('div', {
+          className: 'dfp-path',
+          title: `${notice.path}\n\nClick to copy`,
+          onClick: () => void copyText(notice.path)
+        }, React.createElement('span', { className: 'dfp-path-text' }, notice.path)),
+        notice.requested !== notice.path
+          ? React.createElement('div', { className: 'dfp-sub' }, `The link named “${notice.requested}”, read from the workspace root.`)
+          : null,
+        React.createElement('div', { className: 'dfp-sub' }, 'Only files that exist can be opened. Nothing was searched for and nothing was opened.'),
+        React.createElement('div', { className: 'dfp-stats' },
+          React.createElement('button', {
+            type: 'button', className: 'dfp-btn',
+            title: 'Search the workspace yourself — nothing opens until you pick',
+            onClick: () => {
+              openPalette(sessionId, 'files');
+              void runPalette(sessionId, basename(notice.requested ?? notice.path));
+            }
+          }, 'Search workspace'),
+          React.createElement('button', {
+            type: 'button', className: 'dfp-btn',
+            onClick: () => mutate(sessionId, (s) => { s.notice = null })
+          }, 'Dismiss')));
+    }
+
     function FileTabs({ state, sessionId }) {
       if (state.tabs.length < 2) return null;
       return React.createElement('div', { className: 'dfp-tabs', 'data-kind': 'files' },
@@ -1516,6 +1552,7 @@ body[data-ds-dark-theme] .dfp-root {
               React.createElement('span', { className: 'dfp-spin' }),
               `Opening ${state.pending.path}`)
             : null,
+          React.createElement(OpenNotice, { state, sessionId }),
           React.createElement(FindBar, { state, tab, sessionId }),
           React.createElement(Palette, { state, sessionId }),
           state.tab === 'files'
@@ -1818,6 +1855,19 @@ body[data-ds-dark-theme] .dfp-root {
       return tab;
     }
 
+    /**
+     * The gate in front of every open: a tab exists only for a path the host
+     * confirms right now. A stale link, a typo, a path somebody invented — none
+     * of them can put content on screen, because none of them get a tab.
+     */
+    function refuseOpen(sessionId, notice) {
+      mutate(sessionId, (state) => {
+        state.pending = null;
+        state.notice = notice;
+        trace(state, 'refused', notice);
+      });
+    }
+
     function closeTab(sessionId, index) {
       mutate(sessionId, (state) => {
         state.tabs.splice(index, 1);
@@ -1847,11 +1897,19 @@ body[data-ds-dark-theme] .dfp-root {
 
       runtime.visible = true;
       applyPanelHost(ctx, sessionId);
+      // The workspace root is known whether or not the path turns out to exist:
+      // the refused notice and the tree still need somewhere to point at.
+      mutate(sessionId, (state) => { state.cwd = cwd });
 
-      // A directory link opens the tree at that directory; that is still the
-      // exact path, not a guess.
+      // Nothing opens unless it is on disk right now. A directory link opens the
+      // tree at that directory; anything else that is not there is refused with
+      // the exact path it tried — no tab, no content, no guess.
       const stat = await callHost('stat', { path: absolute, cwd }).catch(() => null);
-      if (stat !== null && stat.isDirectory === true) {
+      if (stat === null) {
+        refuseOpen(sessionId, { kind: 'missing', path: absolute, requested, at: Date.now() });
+        return;
+      }
+      if (stat.isDirectory === true) {
         mutate(sessionId, (state) => {
           state.cwd = cwd;
           state.pending = null;
@@ -1873,6 +1931,7 @@ body[data-ds-dark-theme] .dfp-root {
         const entry = pushTab(state, absolute, relative, null, null);
         entry.error = null;
         entry.requestedPath = requested;
+        state.notice = null;
         state.tab = options?.view ?? 'preview';
         trace(state, 'link', { requested, absolute });
         return entry;
@@ -1895,8 +1954,24 @@ body[data-ds-dark-theme] .dfp-root {
           applyPanelHost(panelContext, sessionId);
         }
       }
+      const cwd = options?.cwd ?? sessionState(sessionId).cwd;
+      const stat = await callHost('stat', { path: normalized, cwd }).catch(() => null);
+      if (stat === null) {
+        refuseOpen(sessionId, { kind: 'missing', path: normalized, requested: normalized, at: Date.now() });
+        return;
+      }
+      if (stat.isDirectory === true) {
+        mutate(sessionId, (state) => {
+          state.pending = null;
+          state.notice = null;
+          state.tab = 'files';
+        });
+        await loadTree(sessionId, normalized);
+        return;
+      }
       const tab = mutate(sessionId, (state) => {
         state.pending = null;
+        state.notice = null;
         const entry = pushTab(state, normalized, options?.relativePath ?? null, null, options?.key ?? null);
         entry.error = null;
         entry.requestedPath = normalized;
@@ -2361,6 +2436,7 @@ body[data-ds-dark-theme] .dfp-root {
             find: state.find,
             palette: { open: state.palette.open, kind: state.palette.kind, results: state.palette.results.length, index: state.palette.index, query: state.palette.query },
             pending: state.pending,
+            notice: state.notice,
             events: state.events.slice(-40),
             changes: state.changes?.files?.length ?? 0,
             notes: state.notes.length,
@@ -2412,7 +2488,7 @@ body[data-ds-dark-theme] .dfp-root {
           }))
         }
       };
-      console.log('[dsh-file-panel] ready 0.3.6', { wrapped, primitives: primitives !== null });
+      console.log('[dsh-file-panel] ready 0.3.7', { wrapped, primitives: primitives !== null });
     }
 
     const inject = ['slots', 'sessions', 'layout', 'remote', 'remote.session'];

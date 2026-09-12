@@ -1,6 +1,6 @@
 {
   "name": "dsh-file-panel",
-  "version": "0.3.4",
+  "version": "0.3.7",
   "description": "Antigravity-style in-app file panel for DeepSeek Harness: file links open a right-side preview / diff / editor column instead of the OS default app.",
   "type": "module",
   "main": "./index.js",
