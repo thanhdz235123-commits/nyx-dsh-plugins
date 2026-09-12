@@ -2573,6 +2573,57 @@ body[data-ds-dark-theme] .dfp-root {
      * link that points at something which is not there says so, with the exact
      * absolute path it tried, so nobody has to wonder which file was opened.
      */
+    /** How long the session's recorded-path answer is reused. */
+    const RECORDED_PATHS_TTL_MS = 4000;
+
+    /** @type {Map<string, { at: number, paths: string[] }>} */
+    const recordedPathsCache = new Map();
+
+    /**
+     * The session's own record of exact file paths: every `path` / `file_path`
+     * argument a read/write/edit call carried. This is the same source DSH's
+     * own file chips use, so a click resolves to the file the session really
+     * touched instead of a name joined onto a directory.
+     * @param ctx - client context.
+     * @param sessionId - session whose log is read.
+     * @returns the recorded paths, or [] when the host cannot answer.
+     */
+    async function recordedPathsFor(ctx, sessionId) {
+      const cached = recordedPathsCache.get(sessionId);
+      if (cached !== undefined && Date.now() - cached.at < RECORDED_PATHS_TTL_MS) return cached.paths;
+      try {
+        const answer = await callHost('references', { sessionId });
+        const paths = Array.isArray(answer?.paths) ? answer.paths : [];
+        recordedPathsCache.set(sessionId, { at: Date.now(), paths });
+        return paths;
+      } catch {
+        return cached?.paths ?? [];
+      }
+    }
+
+    /**
+     * Resolve a relative token against the session's recorded paths only —
+     * exact suffix first, then a unique basename. Returns null when the session
+     * never recorded this file, which is where the caller falls back to the
+     * ordinary workspace-root resolution.
+     * @param requested - the token as written.
+     * @param paths - recorded paths.
+     * @returns the exact recorded path, or null.
+     */
+    function exactRecordedPath(requested, paths) {
+      const wanted = lexicalNormalize(requested.replace(/^\.\//, ''));
+      if (wanted === '' || paths.length === 0) return null;
+      const suffix = paths.filter((candidate) => {
+        const normalized = lexicalNormalize(candidate);
+        return normalized === wanted || normalized.endsWith(`/${wanted}`);
+      });
+      if (suffix.length > 0) return suffix[suffix.length - 1];
+      const base = wanted.split('/').pop();
+      if (base === undefined || base === '') return null;
+      const sameName = paths.filter((candidate) => candidate.split(/[/\\]/).pop() === base);
+      return sameName.length === 1 ? sameName[0] : null;
+    }
+
     async function openPath(ctx, rawPath, options) {
       ensureStyles();
       const facts = sessionFacts(ctx);
@@ -2585,11 +2636,19 @@ body[data-ds-dark-theme] .dfp-root {
       // written: only the host knows where home is, and joining it to the
       // workspace root would point at a file that merely shares the name.
       const homeRelative = requested === '~' || requested.startsWith('~/') || requested.startsWith('~\\');
-      const absolute = homeRelative === true
-        ? requested
-        : (requested.startsWith('/') || /^[a-zA-Z]:[/\\]/.test(requested)
-          ? nativePath(requested)
-          : (typeof cwd === 'string' && cwd.length > 0 ? nativePath(`${cwd.replace(/[/\\]+$/, '')}/${requested}`) : requested));
+      const asWritten = homeRelative === true || requested.startsWith('/') || /^[a-zA-Z]:[/\\]/.test(requested);
+      // A relative link is answered by the session's own record first: the file
+      // a read/write/edit call named is the file the reader means, and its path
+      // is already exact. Only when the session never named it does the
+      // ordinary workspace-root resolution apply.
+      let recorded = null;
+      if (asWritten !== true && sessionId !== null && sessionId !== undefined) {
+        recorded = exactRecordedPath(requested, await recordedPathsFor(ctx, sessionId));
+      }
+      if (recorded !== null) trace(sessionState(sessionId), 'link-recorded', { requested, path: recorded });
+      const absolute = asWritten === true
+        ? (homeRelative === true ? requested : nativePath(requested))
+        : nativePath(recorded ?? (typeof cwd === 'string' && cwd.length > 0 ? `${cwd.replace(/[/\\]+$/, '')}/${requested}` : requested));
 
       runtime.visible = true;
       if (runtime.dockWidth > defaultDockWidth()) runtime.dockWidth = defaultDockWidth();

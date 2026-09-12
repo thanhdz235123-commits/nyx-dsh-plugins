@@ -35,6 +35,7 @@ const ROUTE_RAW = '/api/dsh-file-panel.raw'
 const ROUTE_SEARCH = '/api/dsh-file-panel.search'
 const ROUTE_REVERT = '/api/dsh-file-panel.revert'
 const ROUTE_RESOLVE = '/api/dsh-file-panel.resolve'
+const ROUTE_REFERENCES = '/api/dsh-file-panel.references'
 
 const MAX_INLINE_BYTES = 1_500_000
 const MAX_RAW_BYTES = 12 * 1024 * 1024
@@ -901,6 +902,75 @@ async function handleDiag(request) {
   return ok({ written: true, file })
 }
 
+/**
+ * File tools whose call arguments name one openable path.
+ *
+ * This mirrors `deriveFilePath` in `@deepseek-ai/dsh-client-ui-tool` — the
+ * mechanism that already made DSH's own file chips exact: the path comes from
+ * the tool call's structured arguments, never from prose and never from
+ * joining a name onto a directory.
+ */
+const FILE_PATH_TOOLS = new Set(['read', 'write', 'edit'])
+const FILE_PATH_KEYS = ['path', 'file_path']
+
+/** @type {Map<string, { count: number, paths: string[] }>} */
+const recordedPathCache = new Map()
+
+/**
+ * Every exact file path a session's file tools named, in call order.
+ * @param events - the session's event log.
+ * @returns the paths as recorded, deduplicated.
+ */
+function recordedPaths(events) {
+  const paths = []
+  for (const event of events) {
+    if (event?.type !== 'tool/call') continue
+    const data = event.data ?? {}
+    if (FILE_PATH_TOOLS.has(data.name) !== true) continue
+    let parsed
+    try {
+      parsed = data.arguments === undefined || data.arguments === '' ? {} : JSON.parse(data.arguments)
+    } catch {
+      continue
+    }
+    if (typeof parsed !== 'object' || parsed === null) continue
+    let picked
+    for (const key of FILE_PATH_KEYS) {
+      const value = parsed[key]
+      if (typeof value === 'string' && value !== '') {
+        picked = value
+        break
+      }
+    }
+    if (picked === undefined) continue
+    const path = picked.split('\n')[0]
+    if (path !== '' && paths.includes(path) !== true) paths.push(path)
+  }
+  return paths
+}
+
+/**
+ * The paths this session's file tools named, for click resolution.
+ *
+ * A relative link is otherwise answered by joining the name onto the session
+ * folder, which is a guess; the session's own record is not a guess. Same
+ * source as DSH's own file chips.
+ *
+ * @param ctx - host plugin context.
+ * @param request - GET /api/dsh-file-panel.references?sessionId=…
+ */
+async function handleReferences(ctx, request) {
+  const url = new URL(request.url)
+  const sessionId = url.searchParams.get('sessionId') ?? ''
+  if (sessionId === '') return ok({ paths: [], source: 'none' })
+  const cached = recordedPathCache.get(sessionId)
+  const events = await loadSessionEventsFromQuery(ctx, sessionId)
+  if (cached !== undefined && events.length === cached.count) return ok({ paths: cached.paths, source: 'cache' })
+  const paths = recordedPaths(events)
+  recordedPathCache.set(sessionId, { count: events.length, paths })
+  return ok({ paths, source: events.length > 0 ? 'query' : 'none' })
+}
+
 /** @param {Request} request */
 async function handleStat(request) {
   const url = new URL(request.url)
@@ -1365,6 +1435,7 @@ export function apply(ctx) {
     [ROUTE_SEARCH, ['GET'], guard((request) => handleSearch(request))],
     [ROUTE_REVERT, ['POST'], guard((request) => handleRevert(request))],
     [ROUTE_RESOLVE, ['GET'], guard((request) => handleResolve(request, ctx))],
+    [ROUTE_REFERENCES, ['GET'], guard((request) => handleReferences(ctx, request))],
   ]
   for (const [routePath, methods, fetch] of routes) {
     connection.fetch.register({ path: routePath, methods, fetch })
