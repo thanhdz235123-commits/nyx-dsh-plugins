@@ -1,11 +1,11 @@
 /**
- * dsh-file-panel — host half.
+ * nyx-file-panel — host half.
  *
  * Serves the small read/write surface behind the in-app file panel:
  * file content, directory listings, session-recorded edit diffs, a git
  * fallback diff, and a guarded atomic write used by the panel's editor.
  *
- * Every route lives under a named `/api/dsh-file-panel.*` exact Fetch route on
+ * Every route lives under a named `/api/nyx-file-panel.*` exact Fetch route on
  * the connection service, so it inherits the browser-session auth fence.
  */
 
@@ -18,26 +18,26 @@ import os from 'node:os'
 import path from 'node:path'
 import zlib from 'node:zlib'
 
-export const name = 'dsh-file-panel'
+export const name = 'nyx-file-panel'
 /** Bumped per host revision; the health route reports it so a reload is provable. */
 export const BUILD = '0.6.3'
 export const inject = ['connection']
 
-const ROUTE_FILE = '/api/dsh-file-panel.file'
-const ROUTE_TREE = '/api/dsh-file-panel.tree'
-const ROUTE_CHANGES = '/api/dsh-file-panel.changes'
-const ROUTE_DIFF = '/api/dsh-file-panel.diff'
-const ROUTE_STAT = '/api/dsh-file-panel.stat'
-const ROUTE_DIAG = '/api/dsh-file-panel.diag'
-const ROUTE_WRITE = '/api/dsh-file-panel.write'
-const ROUTE_HEALTH = '/api/dsh-file-panel.health'
-const ROUTE_PROBE = '/api/dsh-file-panel.probe'
-const ROUTE_RAW = '/api/dsh-file-panel.raw'
-const ROUTE_SEARCH = '/api/dsh-file-panel.search'
-const ROUTE_REVERT = '/api/dsh-file-panel.revert'
-const ROUTE_RESOLVE = '/api/dsh-file-panel.resolve'
-const ROUTE_REFERENCES = '/api/dsh-file-panel.references'
-const ROUTE_LOCATE = '/api/dsh-file-panel.locate'
+const ROUTE_FILE = '/api/nyx-file-panel.file'
+const ROUTE_TREE = '/api/nyx-file-panel.tree'
+const ROUTE_CHANGES = '/api/nyx-file-panel.changes'
+const ROUTE_DIFF = '/api/nyx-file-panel.diff'
+const ROUTE_STAT = '/api/nyx-file-panel.stat'
+const ROUTE_DIAG = '/api/nyx-file-panel.diag'
+const ROUTE_WRITE = '/api/nyx-file-panel.write'
+const ROUTE_HEALTH = '/api/nyx-file-panel.health'
+const ROUTE_PROBE = '/api/nyx-file-panel.probe'
+const ROUTE_RAW = '/api/nyx-file-panel.raw'
+const ROUTE_SEARCH = '/api/nyx-file-panel.search'
+const ROUTE_REVERT = '/api/nyx-file-panel.revert'
+const ROUTE_RESOLVE = '/api/nyx-file-panel.resolve'
+const ROUTE_REFERENCES = '/api/nyx-file-panel.references'
+const ROUTE_LOCATE = '/api/nyx-file-panel.locate'
 
 const MAX_INLINE_BYTES = 1_500_000
 const MAX_RAW_BYTES = 12 * 1024 * 1024
@@ -268,7 +268,7 @@ const MAX_LOG_TAIL_FRAMES = 6000
 /** A log this small is read whole on the spot: accuracy beats a checkpoint. */
 const SYNC_FULL_READ_BYTES = 2 * 1024 * 1024
 /** Where a session's diff-index checkpoint is kept, and how big it may get. */
-const INDEX_CACHE_DIR = 'dsh-file-panel-index'
+const INDEX_CACHE_DIR = 'nyx-file-panel-index'
 const INDEX_CACHE_VERSION = 1
 const MAX_INDEX_CACHE_BYTES = 4 * 1024 * 1024
 /** Sessions whose partial index is being finished off the click path. */
@@ -1159,7 +1159,7 @@ async function handleDiff(request, ctx) {
 async function appendPanelDiag(record) {
   const home = process.env.DSH_HOME
   if (typeof home !== 'string' || home.length === 0) return null
-  const file = path.join(home, 'dsh-file-panel-diag.jsonl')
+  const file = path.join(home, 'nyx-file-panel-diag.jsonl')
   const line = `${JSON.stringify({ ...record, receivedAt: new Date().toISOString() })}\n`
   await fsp.appendFile(file, line).catch(() => {})
   return file
@@ -1238,7 +1238,7 @@ function recordedPaths(events) {
  * source as DSH's own file chips.
  *
  * @param ctx - host plugin context.
- * @param request - GET /api/dsh-file-panel.references?sessionId=…
+ * @param request - GET /api/nyx-file-panel.references?sessionId=…
  */
 async function sessionEventsFor(ctx, sessionId) {
   if (sessionId === '') return { events: [], source: 'none' }
@@ -1332,7 +1332,7 @@ function comparablePath(value) {
  * the answer is the list, and the reader decides.
  *
  * @param ctx - host plugin context.
- * @param request - GET /api/dsh-file-panel.locate?sessionId=…&cwd=…&token=…
+ * @param request - GET /api/nyx-file-panel.locate?sessionId=…&cwd=…&token=…
  */
 async function handleLocate(ctx, request) {
   const url = new URL(request.url)
@@ -1433,7 +1433,7 @@ async function handleWrite(request) {
   }
   const directory = path.dirname(absolute)
   await fsp.mkdir(directory, { recursive: true })
-  const temporary = path.join(directory, `.${path.basename(absolute)}.dsh-file-panel-${process.pid}-${Date.now()}`)
+  const temporary = path.join(directory, `.${path.basename(absolute)}.nyx-file-panel-${process.pid}-${Date.now()}`)
   await fsp.writeFile(temporary, body.content, 'utf8')
   if (existing !== null) await fsp.chmod(temporary, existing.mode).catch(() => {})
   await fsp.rename(temporary, absolute)
@@ -1796,7 +1796,7 @@ async function handleRevert(request) {
     ? current.slice(0, at) + current.slice(at + newText.length)
     : current.slice(0, at) + oldText + current.slice(at + newText.length)
   const stats = await fsp.stat(absolute)
-  const temporary = path.join(path.dirname(absolute), `.${path.basename(absolute)}.dsh-file-panel-revert-${process.pid}-${Date.now()}`)
+  const temporary = path.join(path.dirname(absolute), `.${path.basename(absolute)}.nyx-file-panel-revert-${process.pid}-${Date.now()}`)
   await fsp.writeFile(temporary, next, 'utf8')
   await fsp.chmod(temporary, stats.mode).catch(() => {})
   await fsp.rename(temporary, absolute)
@@ -1843,14 +1843,14 @@ function handleHealth(ctx) {
 export function apply(ctx) {
   const connection = ctx.get('connection')
   if (connection === undefined) {
-    ctx.logger?.warn?.('[dsh-file-panel] connection service unavailable; routes not registered')
+    ctx.logger?.warn?.('[nyx-file-panel] connection service unavailable; routes not registered')
     return
   }
   const guard = (handler) => async (request) => {
     try {
       return await handler(request)
     } catch (error) {
-      ctx.logger?.debug?.(`[dsh-file-panel] ${request.url} failed: ${error instanceof Error ? error.message : String(error)}`)
+      ctx.logger?.debug?.(`[nyx-file-panel] ${request.url} failed: ${error instanceof Error ? error.message : String(error)}`)
       return failure(error)
     }
   }
@@ -1874,5 +1874,5 @@ export function apply(ctx) {
   for (const [routePath, methods, fetch] of routes) {
     connection.fetch.register({ path: routePath, methods, fetch })
   }
-  ctx.logger?.info?.(`[dsh-file-panel] ${routes.length} routes ready under /api/dsh-file-panel.*`)
+  ctx.logger?.info?.(`[nyx-file-panel] ${routes.length} routes ready under /api/nyx-file-panel.*`)
 }

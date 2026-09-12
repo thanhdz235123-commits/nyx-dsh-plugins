@@ -1,5 +1,5 @@
 {
-  "name": "dsh-file-panel",
+  "name": "nyx-file-panel",
   "version": "0.6.3",
   "description": "Antigravity-style in-app file panel for DeepSeek Harness: file links open a right-side preview / diff / editor column instead of the OS default app.",
   "type": "module",
@@ -18,7 +18,7 @@
     "./package.json": "./package.json"
   },
   "bin": {
-    "dsh-file-panel": "./bin/dsh-file-panel.mjs"
+    "nyx-file-panel": "./bin/nyx-file-panel.mjs"
   },
   "files": [
     "lib",
@@ -40,15 +40,15 @@
     "diff",
     "viewer"
   ],
-  "author": "dsh-file-panel contributors",
+  "author": "nyx-file-panel contributors",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/thanhdz235123-commits/dsh-file-panel.git"
+    "url": "git+https://github.com/thanhdz235123-commits/nyx-dsh-plugins.git"
   },
-  "homepage": "https://github.com/thanhdz235123-commits/dsh-file-panel#readme",
+  "homepage": "https://github.com/thanhdz235123-commits/nyx-dsh-plugins#readme",
   "bugs": {
-    "url": "https://github.com/thanhdz235123-commits/dsh-file-panel/issues"
+    "url": "https://github.com/thanhdz235123-commits/nyx-dsh-plugins/issues"
   },
   "publishConfig": {
     "access": "public"

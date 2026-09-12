@@ -1,5 +1,5 @@
 /**
- * Host half of `dsh-message-edit`.
+ * Host half of `nyx-message-edit`.
  *
  * Real edit-message for DeepSeek Harness, built on the Session's own surface
  * mechanism: the edited message replaces the original in place, every surface
@@ -9,7 +9,7 @@
 /** Plugin id, as the loader and the profile's patch file name it. */
 export declare const name: string
 
-/** Build marker, reported by `GET /api/dsh-message-edit.health`. */
+/** Build marker, reported by `GET /api/nyx-message-edit.health`. */
 export declare const BUILD: string
 
 /** Services this half needs before {@link apply} runs. */

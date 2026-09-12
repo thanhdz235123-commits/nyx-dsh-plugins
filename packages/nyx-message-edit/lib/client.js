@@ -1,9 +1,9 @@
 /**
- * dsh-message-edit — client half.
+ * nyx-message-edit — client half.
  *
  * Adds a real Edit action to every user message in the Chat transcript:
  *
- *   pencil → inline editor (Cancel / Send) → POST /api/dsh-message-edit.edit
+ *   pencil → inline editor (Cancel / Send) → POST /api/nyx-message-edit.edit
  *
  * The host half owns the conversation semantics (surface truncation + replace
  * + one regenerating turn). This half owns presentation only:
@@ -14,24 +14,24 @@
  *    state the host reports, so a reload never resurrects them.
  */
 window.__ModuleLoader__.load({
-  id: 'dsh-message-edit',
+  id: 'nyx-message-edit',
   factory: (require) => {
     const module = { exports: {} }
     const exports = module.exports
 
     const CLIENT_BUILD = '0.1.0'
-    const STYLE_ID = 'dsh-message-edit-style'
-    const HIDDEN_STYLE_ID = 'dsh-message-edit-hidden'
-    const EDITOR_ID = 'dsh-message-edit-editor'
-    const PENCIL_ID = 'dsh-message-edit-pencil'
-    const NODE_KIND = 'dsh-message-edit'
+    const STYLE_ID = 'nyx-message-edit-style'
+    const HIDDEN_STYLE_ID = 'nyx-message-edit-hidden'
+    const EDITOR_ID = 'nyx-message-edit-editor'
+    const PENCIL_ID = 'nyx-message-edit-pencil'
+    const NODE_KIND = 'nyx-message-edit'
     /**
      * Flow-key kind prefixes that carry a message id. `input-message` is the
-     * harness's own user row; `dsh-message-edit` is the row this plugin renders
+     * harness's own user row; `nyx-message-edit` is the row this plugin renders
      * for an already-edited message — without it an edited message could never
      * be edited again.
      */
-    const USER_KIND_PREFIXES = ['input-message', 'dsh-message-edit', 'steering']
+    const USER_KIND_PREFIXES = ['input-message', 'nyx-message-edit', 'steering']
     /**
      * The picker's marks, copied verbatim from `@deepseek-ai/dsh-client-ui-primitives`
      * (`IconChevronDownOutline14`, `IconChevronRightOutline14`, `IconCheckOutline16`,
@@ -115,7 +115,7 @@ tr[${REPLACED_ATTR}="true"][data-turn-start="true"] > td:last-child::after {
     }
 
     async function fetchState(sessionId) {
-      const response = await fetch(`/api/dsh-message-edit.state?sessionId=${encodeURIComponent(sessionId)}`)
+      const response = await fetch(`/api/nyx-message-edit.state?sessionId=${encodeURIComponent(sessionId)}`)
       const payload = await response.json().catch(() => null)
       if (payload?.ok !== true) throw new Error(payload?.error?.message ?? `state failed (${response.status})`)
       return payload.value
@@ -127,7 +127,7 @@ tr[${REPLACED_ATTR}="true"][data-turn-start="true"] > td:last-child::after {
      */
     function postDiag(facts) {
       try {
-        void fetch('/api/dsh-message-edit.diag', {
+        void fetch('/api/nyx-message-edit.diag', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ build: CLIENT_BUILD, ...facts })
@@ -142,7 +142,7 @@ tr[${REPLACED_ATTR}="true"][data-turn-start="true"] > td:last-child::after {
       // Present (even empty) tells the host which of the message's own images
       // stay; images can only be dropped by an edit, never added.
       if (Array.isArray(keepImages)) body.keepImages = keepImages
-      const response = await fetch('/api/dsh-message-edit.edit', {
+      const response = await fetch('/api/nyx-message-edit.edit', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body)
@@ -695,7 +695,7 @@ tr[${REPLACED_ATTR}="true"][data-turn-start="true"] > td:last-child::after {
         try {
           listener(state)
         } catch (error) {
-          console.warn('[dsh-message-edit] listener failed:', error)
+          console.warn('[nyx-message-edit] listener failed:', error)
         }
       }
     }
@@ -1216,7 +1216,7 @@ tr[${REPLACED_ATTR}="true"][data-turn-start="true"] > td:last-child::after {
         applyState(state)
         if (previous !== undefined && previous !== null && previous.hiddenKeys.length !== state.hiddenKeys.length) return
       } catch (error) {
-        console.warn('[dsh-message-edit] state refresh failed:', error?.message ?? error)
+        console.warn('[nyx-message-edit] state refresh failed:', error?.message ?? error)
       }
     }
 
@@ -1420,12 +1420,12 @@ tr[${REPLACED_ATTR}="true"][data-turn-start="true"] > td:last-child::after {
       installStyles()
       try {
         if (ctx.uiConversation?.events?.register !== undefined) {
-          ctx.effect(() => ctx.uiConversation.events.register(editDefinition), 'dsh-message-edit conversation node')
+          ctx.effect(() => ctx.uiConversation.events.register(editDefinition), 'nyx-message-edit conversation node')
         } else {
-          console.warn('[dsh-message-edit] uiConversation unavailable; edited messages will not render')
+          console.warn('[nyx-message-edit] uiConversation unavailable; edited messages will not render')
         }
       } catch (error) {
-        console.warn('[dsh-message-edit] conversation node registration failed:', error?.message ?? error)
+        console.warn('[nyx-message-edit] conversation node registration failed:', error?.message ?? error)
       }
 
       stateCtx = ctx
@@ -1458,7 +1458,7 @@ tr[${REPLACED_ATTR}="true"][data-turn-start="true"] > td:last-child::after {
         }
         if (pollTimer !== null) clearInterval(pollTimer)
         stateCtx = null
-      }, 'dsh-message-edit DOM listeners')
+      }, 'nyx-message-edit DOM listeners')
 
       void refresh(ctx, true)
       pollTimer = window.setInterval(() => { void refresh(ctx, false) }, POLL_INTERVAL_MS)
@@ -1511,33 +1511,33 @@ tr[${REPLACED_ATTR}="true"][data-turn-start="true"] > td:last-child::after {
           chip.querySelector('.dme-chip-x')?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
           return true
         },
-        modelOptions: () => [...document.querySelectorAll('#dsh-message-edit-editor .dme-model-option')]
+        modelOptions: () => [...document.querySelectorAll('#nyx-message-edit-editor .dme-model-option')]
           .map((option) => ({ value: option.dataset.modelKey ?? '', label: option.textContent })),
         modelTrigger: () => {
-          const trigger = document.querySelector('#dsh-message-edit-editor .dme-model-trigger')
+          const trigger = document.querySelector('#nyx-message-edit-editor .dme-model-trigger')
           if (trigger === null) return null
           return { text: trigger.textContent, expanded: trigger.getAttribute('aria-expanded'), disabled: trigger.disabled }
         },
         openModelMenu: () => {
-          const trigger = document.querySelector('#dsh-message-edit-editor .dme-model-trigger')
+          const trigger = document.querySelector('#nyx-message-edit-editor .dme-model-trigger')
           if (trigger === null) return false
           trigger.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }))
           return true
         },
         modelMenuBox: () => {
-          const menu = document.querySelector('#dsh-message-edit-editor .dme-model-menu')
+          const menu = document.querySelector('#nyx-message-edit-editor .dme-model-menu')
           if (menu === null || menu.hidden) return null
           const box = menu.getBoundingClientRect()
           return { x: Math.round(box.x), y: Math.round(box.y), w: Math.round(box.width), h: Math.round(box.height) }
         },
         chooseModel: (value) => {
-          const option = [...document.querySelectorAll('#dsh-message-edit-editor .dme-model-option')]
+          const option = [...document.querySelectorAll('#nyx-message-edit-editor .dme-model-option')]
             .find((node) => (node.dataset.modelKey ?? '') === value)
           if (option === undefined) return false
           option.click()
           return true
         },
-        modelCells: () => [...document.querySelectorAll('#dsh-message-edit-editor .dme-model-cell')]
+        modelCells: () => [...document.querySelectorAll('#nyx-message-edit-editor .dme-model-cell')]
           .map((node) => ({ kind: node.dataset.dmeCell ?? '', label: node.textContent ?? '' })),
         sendEditor: () => {
           const host = document.getElementById(EDITOR_ID)
@@ -1554,7 +1554,7 @@ tr[${REPLACED_ATTR}="true"][data-turn-start="true"] > td:last-child::after {
         chatKey,
         messageIdOfKey
       }
-      console.log(`[dsh-message-edit] client ${CLIENT_BUILD} loaded`)
+      console.log(`[nyx-message-edit] client ${CLIENT_BUILD} loaded`)
     }
 
     const inject = ['sessions', 'uiConversation', 'remote', 'remote.session']

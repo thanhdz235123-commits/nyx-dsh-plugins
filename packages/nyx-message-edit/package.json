@@ -1,5 +1,5 @@
 {
-  "name": "dsh-message-edit",
+  "name": "nyx-message-edit",
   "version": "0.1.0",
   "description": "True edit-message for DeepSeek Harness: replace a user message in place, truncate everything after it, and regenerate from that exact point.",
   "type": "module",
@@ -18,7 +18,7 @@
     "./package.json": "./package.json"
   },
   "bin": {
-    "dsh-message-edit": "./bin/dsh-message-edit.mjs"
+    "nyx-message-edit": "./bin/nyx-message-edit.mjs"
   },
   "files": [
     "lib",
@@ -40,11 +40,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/thanhdz235123-commits/dsh-message-edit.git"
+    "url": "git+https://github.com/thanhdz235123-commits/nyx-dsh-plugins.git"
   },
-  "homepage": "https://github.com/thanhdz235123-commits/dsh-message-edit#readme",
+  "homepage": "https://github.com/thanhdz235123-commits/nyx-dsh-plugins#readme",
   "bugs": {
-    "url": "https://github.com/thanhdz235123-commits/dsh-message-edit/issues"
+    "url": "https://github.com/thanhdz235123-commits/nyx-dsh-plugins/issues"
   },
   "publishConfig": {
     "access": "public"

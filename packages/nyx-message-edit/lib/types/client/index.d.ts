@@ -1,9 +1,9 @@
 /**
- * Client half of `dsh-message-edit`, loaded by the harness module loader
- * (`window.__ModuleLoader__.load`, id `dsh-message-edit`).
+ * Client half of `nyx-message-edit`, loaded by the harness module loader
+ * (`window.__ModuleLoader__.load`, id `nyx-message-edit`).
  *
  * Adds a pencil to every editable user message and an inline editor that posts
- * to `/api/dsh-message-edit.edit`.
+ * to `/api/nyx-message-edit.edit`.
  */
 
 /** Plugin id, matching the host half. */

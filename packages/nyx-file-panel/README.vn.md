@@ -1,4 +1,4 @@
-# dsh-file-panel — panel xem file kiểu Antigravity cho DSH
+# nyx-file-panel — panel xem file kiểu Antigravity cho DSH
 
 Click vào file trong chat của **DSH Desktop / DeepSeek Harness** giờ **không mở app ngoài nữa**:
 nó mở một **panel bên phải** ngay trong app — xem nội dung (có tô màu cú pháp), xem **diff** file
@@ -52,7 +52,7 @@ Cần: DSH Desktop 0.8.x, Node 20+. Mở DSH Desktop một lần để nó tạo
 **Một lệnh cho mọi máy** (macOS, Linux, Windows):
 
 ```sh
-npx --yes github:thanhdz235123-commits/dsh-file-panel install
+npx --yes github:thanhdz235123-commits/nyx-dsh-plugins install
 ```
 
 Rồi reload cửa sổ DSH — `Cmd-R` / `Ctrl-R`. Host half được patch watcher của profile nạp
@@ -61,15 +61,15 @@ ngay; client half cần reload.
 Cài từ checkout, hoặc khi offline:
 
 ```sh
-git clone https://github.com/thanhdz235123-commits/dsh-file-panel
-cd dsh-file-panel
-node bin/dsh-file-panel.mjs install
+git clone https://github.com/thanhdz235123-commits/nyx-dsh-plugins
+cd nyx-file-panel
+node bin/nyx-file-panel.mjs install
 ```
 
 Trỏ tới harness home khác mặc định:
 
 ```sh
-node bin/dsh-file-panel.mjs install --home "/path/to/harness" --profile web
+node bin/nyx-file-panel.mjs install --home "/path/to/harness" --profile web
 ```
 
 ### Hệ điều hành hỗ trợ
@@ -81,12 +81,12 @@ node bin/dsh-file-panel.mjs install --home "/path/to/harness" --profile web
 | Windows | `%APPDATA%\dsh-desktop\harness` |
 
 Toàn bộ là Node 20+ và API trình duyệt: path đi qua `node:path`, panel học separator
-của host từ `/api/dsh-file-panel.health`, ripgrep bundled được resolve `rg` hoặc `rg.exe`.
+của host từ `/api/nyx-file-panel.health`, ripgrep bundled được resolve `rg` hoặc `rg.exe`.
 `git` không bắt buộc — không có git thì tab `Changes` chỉ báo edit của session. Kiểm tra
 máy bằng `doctor`:
 
 ```sh
-npx --yes github:thanhdz235123-commits/dsh-file-panel doctor
+npx --yes github:thanhdz235123-commits/nyx-dsh-plugins doctor
 ```
 
 ### Installer làm gì
@@ -95,17 +95,17 @@ Hai dạng, không bao giờ chồng nhau — chọn một:
 
 | Dạng | Lệnh | Cách kích hoạt |
 |---|---|---|
-| **copy** (mặc định) | `install` | copy file vào `<profile>/node_modules/dsh-file-panel`, chèn từ patch layer của profile. Không chạy package manager, không đụng lockfile. |
-| **dependency** | `install --dep` | thêm `dsh-file-panel` vào `dependencies` + `dsh.profile.bundles` của `<profile>/package.json`; package manager của profile tự cài. Bundle mang theo patch layer nên **không** ghi row thủ công. |
+| **copy** (mặc định) | `install` | copy file vào `<profile>/node_modules/nyx-file-panel`, chèn từ patch layer của profile. Không chạy package manager, không đụng lockfile. |
+| **dependency** | `install --dep` | thêm `nyx-file-panel` vào `dependencies` + `dsh.profile.bundles` của `<profile>/package.json`; package manager của profile tự cài. Bundle mang theo patch layer nên **không** ghi row thủ công. |
 
 ```sh
-node bin/dsh-file-panel.mjs status     # đang cài gì, ở đâu, build nào
-node bin/dsh-file-panel.mjs doctor     # máy này có đủ điều kiện chạy không
-node bin/dsh-file-panel.mjs uninstall  # xoá package, patch row và dependency
+node bin/nyx-file-panel.mjs status     # đang cài gì, ở đâu, build nào
+node bin/nyx-file-panel.mjs doctor     # máy này có đủ điều kiện chạy không
+node bin/nyx-file-panel.mjs uninstall  # xoá package, patch row và dependency
 ```
 
-`--dep` mặc định cài từ `github:thanhdz235123-commits/dsh-file-panel`; dùng `--spec <spec>`
-cho fork, tag (`github:you/dsh-file-panel#v0.3.4`) hoặc đường dẫn local
+`--dep` mặc định cài từ `github:thanhdz235123-commits/nyx-dsh-plugins`; dùng `--spec <spec>`
+cho fork, tag (`github:you/nyx-file-panel#v0.3.4`) hoặc đường dẫn local
 (`file:/path/to/checkout`). Mọi lệnh đều idempotent, và `uninstall` xoá đúng những gì
 `install` đã ghi — patch layer rỗng được reset về `[]` để YAML vẫn hợp lệ.
 
@@ -116,14 +116,14 @@ Tất cả là exact Fetch route trên service `connection` ⇒ tự thừa hư�
 
 | Route | Việc |
 |---|---|
-| `GET /api/dsh-file-panel.file?path&cwd` | nội dung, ngôn ngữ, số dòng, size, mtime, sha256, cờ binary/truncated, thông tin git repo |
-| `GET /api/dsh-file-panel.tree?path&cwd` | 1 cấp thư mục (dir trước, tối đa 4000 entry) |
-| `GET /api/dsh-file-panel.changes?sessionId&cwd` | mọi file đã bị sửa trong session, kèm `+N −M` |
-| `GET /api/dsh-file-panel.diff?path&cwd&sessionId&source` | hunk: `session` (`data.meta.diffs`), `git` (`git diff HEAD`), hoặc `none` |
-| `GET /api/dsh-file-panel.stat?path&cwd` | size/mtime cho vòng poll |
-| `POST /api/dsh-file-panel.write` | ghi atomic + chống ghi đè (stale guard) |
-| `GET /api/dsh-file-panel.health` | kiểm tra service nào đang có |
-| `GET /api/dsh-file-panel.probe?sessionId` | nguồn đọc session nào trả lời, được bao nhiêu event |
+| `GET /api/nyx-file-panel.file?path&cwd` | nội dung, ngôn ngữ, số dòng, size, mtime, sha256, cờ binary/truncated, thông tin git repo |
+| `GET /api/nyx-file-panel.tree?path&cwd` | 1 cấp thư mục (dir trước, tối đa 4000 entry) |
+| `GET /api/nyx-file-panel.changes?sessionId&cwd` | mọi file đã bị sửa trong session, kèm `+N −M` |
+| `GET /api/nyx-file-panel.diff?path&cwd&sessionId&source` | hunk: `session` (`data.meta.diffs`), `git` (`git diff HEAD`), hoặc `none` |
+| `GET /api/nyx-file-panel.stat?path&cwd` | size/mtime cho vòng poll |
+| `POST /api/nyx-file-panel.write` | ghi atomic + chống ghi đè (stale guard) |
+| `GET /api/nyx-file-panel.health` | kiểm tra service nào đang có |
+| `GET /api/nyx-file-panel.probe?sessionId` | nguồn đọc session nào trả lời, được bao nhiêu event |
 
 ## Diff của session được đọc thế nào
 
@@ -172,7 +172,7 @@ accept/reject theo từng chunk (ở đây là revert), cả hai chế độ dif
 ## Changelog
 
 - **0.6.1** — vòng chọn phiên bản. Trước đây sửa xong để lại một nhánh trông như phiên rác; giờ plugin nhớ quan hệ các bản (`localStorage`, khoá theo session + lượt) và vẽ `‹ n/m ›` dưới tin nhắn ở **mọi bản**: `‹` mở bản trước, `›` mở bản sau, có chỉ số bản hiện tại. Vòng này là overlay giống nút ✎ — không đụng DOM của DSH, không shadow renderer nào. Đã test live: sửa tin nhắn trong phiên `bạn là ai` → tạo nhánh, vòng hiện ở nhánh (`‹ 2/2 ›`) và ở bản gốc (`‹ 1/2 ›`), bấm `‹` quay về đúng bản gốc.
-- **0.6.0** — sửa tin nhắn đã gửi rồi gửi lại. Rê chuột vào tin nhắn của mày: hiện nút ✎ (overlay của plugin, không đụng DOM của app), bấm vào là tin nhắn mở ra trong khung sửa ngay dưới bóng chat, có `Hủy` / `Gửi lại` và ⌘↵ để gửi. Vì log của DSH chỉ ghi thêm, "gửi lại" = tách nhánh: mốc fork là tin nhắn **trước** tin nhắn được sửa, đọc từ nhật ký phiên qua host (`/api/dsh-file-panel.chat`) chứ không đoán từ trang; DSH mở phiên nhánh với bản đã sửa được gửi sẵn vào đó. Tin nhắn đầu tiên của phiên không có mốc để tách, nên DSH mở một phiên mới cùng thư mục. Bản này cũng thêm route host `chat` (trả về các lượt người dùng kèm số seq trong log) và 4 check mới chạy trọn luồng (mở, điền sẵn, hủy, tách nhánh).
+- **0.6.0** — sửa tin nhắn đã gửi rồi gửi lại. Rê chuột vào tin nhắn của mày: hiện nút ✎ (overlay của plugin, không đụng DOM của app), bấm vào là tin nhắn mở ra trong khung sửa ngay dưới bóng chat, có `Hủy` / `Gửi lại` và ⌘↵ để gửi. Vì log của DSH chỉ ghi thêm, "gửi lại" = tách nhánh: mốc fork là tin nhắn **trước** tin nhắn được sửa, đọc từ nhật ký phiên qua host (`/api/nyx-file-panel.chat`) chứ không đoán từ trang; DSH mở phiên nhánh với bản đã sửa được gửi sẵn vào đó. Tin nhắn đầu tiên của phiên không có mốc để tách, nên DSH mở một phiên mới cùng thư mục. Bản này cũng thêm route host `chat` (trả về các lượt người dùng kèm số seq trong log) và 4 check mới chạy trọn luồng (mở, điền sẵn, hủy, tách nhánh).
 - **0.5.5** — thanh tab hoạt động lại. Bấm vào tab không có gì xảy ra: handler gọi `activateTab` — hàm này đã mất trong một lần refactor trước đó, nên quay lại file đã mở thì chết im lặng, trong khi dấu ✕ vẫn đóng được. Đã trả lại hàm (chuyển tab, nạp file nếu chưa nạp, vẽ lại) và bộ test giờ **bấm tab cả hai chiều** để không thể mất lần nữa mà không ai biết.
 - **0.5.4** — panel không còn tự tắt. Trước đây bấm sang file khác khi panel đang mở thì cú bấm đó tính là "bấm ra ngoài" nên panel đóng, phải bấm lần hai mới mở file mới; giờ không có gì trên trang đóng nó nữa. Mở file khác = panel chuyển sang file đó luôn, và chỉ tắt bằng đúng thứ mày chủ động: ✕, `Esc`, `⌥⌘F`. Panel cũng không còn chiếm cột details của layout (luôn dock) nên không bao giờ che panel riêng của app; khi cột đó mở (bấm tool call, kết quả tìm kiếm) panel tạm đứng xuống nhưng giữ nguyên tab và tự quay lại khi cột đóng.
 - **0.5.3** — path trong tin nhắn thành cái cửa, và dải lượt được cho nghỉ. DSH chỉ làm click được đúng một thứ trong đoạn chat (chip ở tool row), nên path viết trong câu văn hay trong `code` bấm không có gì xảy ra — nhìn như plugin không tồn tại. Giờ panel đọc token ngay dưới con trỏ, cắt dấu câu, bỏ qua URL và `24/7`, rồi resolve đúng y như viết và đưa qua cùng một cổng kiểm tra tồn tại — path không có thì bị từ chối kèm đúng tên của nó, không thay thế file nào. Path thật được gạch chân chấm + con trỏ pointer (`debug.clickPaths(false)` để tắt). Turn navigator mặc định được cho nghỉ (`debug.hideTurnRail(false)` để trả lại). Khi panel mở, đoạn chat tự nhường chỗ — chỉ 1 rule scoped trên đúng cột vốn đã sở hữu khoảng đó, xoá ngay khi panel đóng, chat giữ tối thiểu 560px, không ghi gì vào DOM của DSH. `~` giờ là home trên mọi hệ điều hành.
@@ -180,7 +180,7 @@ accept/reject theo từng chunk (ở đây là revert), cả hai chế độ dif
 - **0.5.1** — panel không còn đè lên panel của chính app. Ghế nó chiếm trong slot `details` có priority cao hơn entry của DSH, nên bấm vào tool call thì **panel file** hiện ra thay vì phần chi tiết tool — nhìn như panel của app hỏng. Giờ panel theo dõi cột details và **nhường ngay** khi layout mở cột đó, và không còn wrap `openDetails` của layout nữa (monkey-patch service của app là cách plugin kéo app chết theo). Lỗi nạp cũng rõ hơn: nếu `apply` fail, lý do nằm ở `window.__dshFilePanel.error` thay vì plugin im lặng không làm gì.
 - **0.5.0** — panel không còn đụng vào thứ nó không sở hữu. Bỏ sạch: padding chèn vào cột giữa của layout, thuộc tính ghi lên `body`, ẩn phần tử DSH theo class, và tab nổi `‹ File panel`. Panel giờ **chỉ vẽ chính nó** — một mặt phẳng fixed, 32% cửa sổ (300–420px) ở mép phải, các cột của layout để nguyên như DSH vẽ. Mở bằng cách bấm vào đường dẫn file trong chat (hoặc `⌥⌘F`); đóng bằng bấm ra ngoài, `Esc`, hoặc nút ✕. Panel mở ra mà không có gì để hiện thì nói rõ, thay vì vẽ ra khoảng không.
 - **0.4.3** — panel tự chọn bề rộng theo cửa sổ. Mặc định 32% viewport (300–420px) thay vì 420 cố định, dùng `border-box` nên con số đúng bằng bề rộng thật, và chỉ chèn vào chat khi chat còn giữ được ≥700px nội dung — dưới mức đó panel nổi ở mép thay vì bóp chat thành cột.
-- **0.4.2** — panel tự mang "hộp đen". Client báo lại đúng cửa sổ nó đang chạy — build, mode, toạ độ panel, bề rộng các cột của layout, mức chèn vào chat — qua `POST /api/dsh-file-panel.diag`, host ghi nối vào `dsh-file-panel-diag.jsonl` cạnh harness home; tiêu đề cửa sổ cũng mang bản tóm tắt đó. Báo lỗi từ máy khác giờ đọc được thay vì đoán.
+- **0.4.2** — panel tự mang "hộp đen". Client báo lại đúng cửa sổ nó đang chạy — build, mode, toạ độ panel, bề rộng các cột của layout, mức chèn vào chat — qua `POST /api/nyx-file-panel.diag`, host ghi nối vào `nyx-file-panel-diag.jsonl` cạnh harness home; tiêu đề cửa sổ cũng mang bản tóm tắt đó. Báo lỗi từ máy khác giờ đọc được thay vì đoán.
 - **0.4.1** — panel vừa với chỗ được cấp. Việc dùng cột phải của DSH hay không giờ **đo cột trước khi mount** (seat nằm trong cột 0px từng vẽ ra một dải nội dung tràn ở mép cửa sổ), và khi không có cột thì dock chỉ chèn tối đa `cột giữa − 520px`, nên chat giữ được bề rộng đọc được thay vì bị bóp. DSH mở cột ⇒ panel nằm trong cột, không chèn, không đè.
 - **0.4.0** — panel **đẩy** chat chứ không đè, và luôn có đường vào. Dock giờ chèn padding vào cột giữa (`centerCol` = bề rộng panel) thay vì phủ lên; một tab mảnh `‹ File panel` ở mép phải (bấm để mở/đóng, `⌥⌘F` từ bất kỳ đâu), và nó bám mép panel khi panel đang mở. Mở mà chưa có file thì hiện cây workspace. Panel chỉ hiện khi được gọi — click file, bấm tab, hoặc phím tắt.
 - **0.3.9** — — dock không còn "dính": bấm ra ngoài hoặc `Escape` là panel ẩn đi; bề rộng bị chặn ở 45% cửa sổ; và dock không có gì để hiện (không tab, không notice) thì **không vẽ ra** — nên nó không thể nằm đè lên chat mà trông như lỗi.

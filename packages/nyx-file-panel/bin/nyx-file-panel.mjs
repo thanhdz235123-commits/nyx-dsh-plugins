@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /**
- * dsh-message-edit installer.
+ * nyx-file-panel installer.
  *
- * Installs the plugin into a DeepSeek Harness profile on any machine:
+ * Installs the panel into a DeepSeek Harness profile on any machine:
  *
- *   npx --yes github:thanhdz235123-commits/dsh-message-edit install
- *   node bin/dsh-message-edit.mjs install --home "/path/to/harness"
+ *   npx --yes github:thanhdz235123-commits/nyx-dsh-plugins install
+ *   node bin/nyx-file-panel.mjs install --home "/path/to/harness"
  *
  * Two shapes are supported:
  *
@@ -17,9 +17,6 @@
  *                    package manager installs it — the same shape dshmarket
  *                    uses for third-party plugins.
  *
- * The host half imports nothing from the harness, so it works from either
- * installation shape without a dependency tree of its own.
- *
  * Every command is idempotent and reversible; `uninstall` removes exactly what
  * `install` wrote.
  */
@@ -29,13 +26,13 @@ import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
-const PACKAGE = 'dsh-message-edit'
+const PACKAGE = 'nyx-file-panel'
 const AUTHOR = 'thanhdz235123-commits'
 const REPO = `https://github.com/${AUTHOR}/${PACKAGE}`
 const DEFAULT_SPEC = `github:${AUTHOR}/${PACKAGE}`
 const MARK_START = `# >>> ${PACKAGE} (managed by \`${PACKAGE} install\` — do not edit between the markers)`
 const MARK_END = `# <<< ${PACKAGE}`
-const ASSETS = ['cordis.patch.yml', 'package.json', 'README.md', 'LICENSE']
+const ASSETS = ['cordis.patch.yml', 'package.json', 'README.md', 'README.vn.md', 'LICENSE', 'docs']
 /** Directories every install carries (the halves, the installer, the dev tools). */
 const ASSET_DIRS = ['lib', 'bin', 'tools']
 /** Files an install from before the `lib/` layout left at the package root. */
@@ -115,11 +112,9 @@ function insertBlock() {
 /** Whether a row for this plugin already exists, marked or hand-written. */
 function patchState(text) {
   if (text.includes(MARK_START)) return 'marked'
-  // A row inside a shared insert block is one indented `- id:` line; matching
-  // it is what keeps `install` idempotent instead of duplicating the entry.
-  if (new RegExp(`^\\s*-\\s+id:\\s*${PACKAGE}\\s*$`, 'm').test(text)) return 'present'
   const loose = new RegExp(`-\\s*insert:\\s*\\n(\\s*)-\\s*id:\\s*${PACKAGE}\\s*\\n`)
-  if (loose.test(text)) return 'present'
+  if (loose.test(text)) return 'manual'
+  if (new RegExp(`^-\\s*id:\\s*${PACKAGE}\\s*$`, 'm').test(text)) return 'manual'
   return 'absent'
 }
 
@@ -132,100 +127,17 @@ function patchPayload(text) {
     .trim()
 }
 
-/**
- * Row lines for one plugin, at the indentation of the block's existing rows.
- * @param id - plugin id, used for both `id` and `name`.
- * @param indent - leading whitespace of a sibling `- id:` line.
- * @returns the two YAML lines.
- */
-function insertRowLines(id, indent) {
-  return [`${indent}- id: ${id}`, `${indent}  name: ${id}`]
-}
-
-/**
- * Extend an existing top-level `- insert:` row with one more entry.
- *
- * The patch layer must stay a SINGLE YAML document — `js-yaml.load()`, which
- * the harness boots through, throws on a multi-document stream, so appending a
- * second `- insert:` block would stop the app from starting. An existing row is
- * therefore extended in place.
- *
- * @param text - current patch file.
- * @param id - plugin id to add.
- * @returns the merged text, or null when there is no insert block to extend.
- */
-function mergeIntoInsertBlock(text, id) {
-  const lines = text.split('\n')
-  const start = lines.findIndex((line) => /^- insert:\s*$/.test(line))
-  if (start === -1) return null
-  let end = lines.length
-  for (let index = start + 1; index < lines.length; index += 1) {
-    if (lines[index].trim() === '') continue
-    if (lines[index].search(/\S/) === 0) {
-      end = index
-      break
-    }
-  }
-  let indent = null
-  let lastChild = start
-  for (let index = start + 1; index < end; index += 1) {
-    const match = /^(\s*)-\s+id:\s*\S+/.exec(lines[index])
-    if (match !== null && indent === null) indent = match[1]
-    if (lines[index].trim() !== '') lastChild = index
-  }
-  if (indent === null) return null
-  const inserted = insertRowLines(id, indent)
-  return [...lines.slice(0, lastChild + 1), ...inserted, ...lines.slice(lastChild + 1)].join('\n')
-}
-
-/**
- * Drop this plugin's `- id:`/`name:` pair from a shared insert block, leaving
- * every other row (and the surrounding comments) exactly as they were.
- * @param text - current patch file.
- * @param id - plugin id to drop.
- * @returns the pruned text, or null when the pair is not present.
- */
-function dropRowFromInsertBlock(text, id) {
-  const lines = text.split('\n')
-  const removed = []
-  const idPattern = new RegExp(`^\\s*-\\s+id:\\s*${id}\\s*$`)
-  for (let index = 0; index < lines.length; index += 1) {
-    if (idPattern.test(lines[index]) !== true) continue
-    const indent = lines[index].search(/\S/)
-    let stop = index + 1
-    while (stop < lines.length && lines[stop].trim() !== '' && lines[stop].search(/\S/) > indent) stop += 1
-    removed.push([index, stop])
-    index = stop - 1
-  }
-  if (removed.length === 0) return null
-  const kept = []
-  let cursor = 0
-  for (const [from, to] of removed) {
-    kept.push(...lines.slice(cursor, from))
-    cursor = to
-  }
-  kept.push(...lines.slice(cursor))
-  return kept.join('\n')
-}
-
 function ensurePatchEntry(patchFile) {
   const before = existsSync(patchFile) ? readFileSync(patchFile, 'utf8') : ''
   const state = patchState(before)
-  // 'marked' and 'present' both mean the row is already there — never add a second one.
-  if (state === 'marked' || state === 'present') return { changed: false, state }
-  const payload = patchPayload(before)
-  // An empty layer is literally `[]`; replace the placeholder rather than grow
-  // it into a second document.
-  if (payload === '' || payload === '[]') {
-    writeFileSync(patchFile, insertBlock())
-    return { changed: true, state: state === 'manual' ? 'manual+marked' : 'added' }
-  }
-  const merged = mergeIntoInsertBlock(before, PACKAGE)
-  if (merged !== null) {
-    writeFileSync(patchFile, merged)
-    return { changed: true, state: 'merged' }
-  }
-  const next = `${before.replace(/\s*$/, '\n')}\n${insertBlock()}`
+  if (state === 'marked') return { changed: false, state }
+  // An empty layer is literally `[]`: appending a second block after it would
+  // make the file two YAML documents and the harness refuses to boot. Replace
+  // the placeholder instead of growing it.
+  const empty = patchPayload(before) === '' || patchPayload(before) === '[]'
+  const next = empty
+    ? insertBlock()
+    : `${before.replace(/\s*$/, '\n')}\n${insertBlock()}`
   writeFileSync(patchFile, next)
   return { changed: true, state: state === 'manual' ? 'manual+marked' : 'added' }
 }
@@ -236,19 +148,7 @@ function removePatchEntry(patchFile) {
   let next = null
   let state = 'removed'
 
-  if (before.includes(MARK_START) !== true && before.includes(`- id: ${PACKAGE}`) === true) {
-    // The row lives in a block this installer shares with another plugin (or
-    // one written by hand): drop only this plugin's pair.
-    const pruned = dropRowFromInsertBlock(before, PACKAGE)
-    if (pruned !== null) {
-      next = pruned
-      state = 'merged'
-    }
-  }
-
-  if (next !== null) {
-    // fall through to the shared normalization below
-  } else if (before.includes(MARK_START) === true) {
+  if (before.includes(MARK_START) === true) {
     const start = before.indexOf(MARK_START)
     const endIndex = before.indexOf(MARK_END, start)
     const end = endIndex === -1 ? before.length : endIndex + MARK_END.length
@@ -288,10 +188,7 @@ function removePatchEntry(patchFile) {
   if (next === null) return { changed: false, state }
   next = next.replace(/\n{3,}/g, '\n\n').replace(/[ \t]+\n/g, '\n')
   // An emptied patch layer has to stay valid YAML — and keeps its comments.
-  // A `- insert:` row left with no children is equally invalid (`insert: null`)
-  // and would be rejected at boot.
-  const emptied = patchPayload(next) === '' || /^- insert:\s*$/.test(patchPayload(next))
-  if (emptied) {
+  if (patchPayload(next) === '') {
     const comments = next.split('\n').filter((line) => line.trim().startsWith('#'))
     next = comments.length === 0 ? '[]\n' : `${comments.join('\n')}\n\n[]\n`
   }
@@ -378,8 +275,8 @@ function install(flags) {
       }
     }
     for (const asset of STALE_ROOT) {
-      // A previous install of this package kept its halves at the root; leaving
-      // them behind would shadow nothing but confuse every reader of the profile.
+      // A previous install of this package kept its halves at the package root;
+      // leaving them behind would shadow nothing but confuse every reader.
       rmSync(path.join(profile.target, asset), { force: true })
     }
     for (const directory of ASSET_DIRS) {
@@ -388,7 +285,11 @@ function install(flags) {
     }
     for (const asset of ASSETS) {
       const from = path.join(source, asset)
-      if (existsSync(from) === true && copied.includes(asset) !== true) copyFileSync(from, path.join(profile.target, asset))
+      if (existsSync(from) !== true || copied.includes(asset) === true) continue
+      // An entry may be a directory (docs, screenshots): copy it whole rather
+      // than handing a directory to a file copy, which fails with ENOTSUP.
+      if (statSync(from).isDirectory() === true) cpSync(from, path.join(profile.target, asset), { recursive: true })
+      else copyFileSync(from, path.join(profile.target, asset))
     }
     report.steps.push(`copied ${readdirSync(profile.target).length} entries to ${path.relative(home, profile.target)}`)
   }
@@ -412,7 +313,7 @@ function install(flags) {
     report.steps.push(`patch layer untouched — the bundle inserts the plugin itself`)
   }
   report.howToFinish = [
-    'Restart DSH Desktop so the host half (Agent edit hook + routes) is loaded.',
+    'Host half: the profile patch layer is watched — it comes up on its own (a restart applies host code updates).',
     'Client half: reload the DSH window (Cmd-R / Ctrl-R) so lib/client.js is picked up.'
   ]
   return report
@@ -543,10 +444,8 @@ ${dim('OPTIONS')}
   -h, --help
 
 ${dim('AFTER INSTALLING')}
-  Restart DSH Desktop: the host half registers the Agent edit hook and the
-  /api/dsh-message-edit.* routes at harness start. The client half (pencil,
-  inline editor, transcript hiding) then loads with the window; reloading the
-  window alone (Cmd-R / Ctrl-R) is enough for later client-only updates.
+  The host half is picked up by the profile patch watcher on its own; reload the
+  DSH window (Cmd-R / Ctrl-R) so the client half is loaded.
 `
 
 function main() {

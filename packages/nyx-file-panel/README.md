@@ -1,4 +1,4 @@
-# dsh-file-panel
+# nyx-file-panel
 
 Antigravity-style in-app file panel for **DSH Desktop / DeepSeek Harness**.
 
@@ -61,7 +61,7 @@ creates its harness home.
 **One command, any machine** (macOS, Linux, Windows):
 
 ```sh
-npx --yes github:thanhdz235123-commits/dsh-file-panel install
+npx --yes github:thanhdz235123-commits/nyx-dsh-plugins install
 ```
 
 Then reload the DSH window — `Cmd-R` / `Ctrl-R`. The host half is picked up by the
@@ -70,15 +70,15 @@ profile's patch watcher immediately; the client half needs the reload.
 From a checkout, or offline:
 
 ```sh
-git clone https://github.com/thanhdz235123-commits/dsh-file-panel
-cd dsh-file-panel
-node bin/dsh-file-panel.mjs install
+git clone https://github.com/thanhdz235123-commits/nyx-dsh-plugins
+cd nyx-file-panel
+node bin/nyx-file-panel.mjs install
 ```
 
 Point it somewhere else when the harness home is not the default:
 
 ```sh
-node bin/dsh-file-panel.mjs install --home "/path/to/harness" --profile web
+node bin/nyx-file-panel.mjs install --home "/path/to/harness" --profile web
 ```
 
 ### Supported platforms
@@ -90,13 +90,13 @@ node bin/dsh-file-panel.mjs install --home "/path/to/harness" --profile web
 | Windows | `%APPDATA%\dsh-desktop\harness` |
 
 Everything is Node 20+ and browser APIs: paths go through `node:path`, the panel
-learns the host's separator from `/api/dsh-file-panel.health`, and the bundled
+learns the host's separator from `/api/nyx-file-panel.health`, and the bundled
 ripgrep is resolved as `rg` or `rg.exe`. `git` is optional — without it the
 `Changes` tab reports session edits only. Run the installer's `doctor` to see what
 a machine is missing:
 
 ```sh
-npx --yes github:thanhdz235123-commits/dsh-file-panel doctor
+npx --yes github:thanhdz235123-commits/nyx-dsh-plugins doctor
 ```
 
 ### What the installer does
@@ -105,17 +105,17 @@ Two shapes, and they never overlap — pick one:
 
 | Shape | Command | How it activates |
 |---|---|---|
-| **copy** (default) | `install` | files land in `<profile>/node_modules/dsh-file-panel`, inserted from the profile's own patch layer. No package manager runs, no lockfile is touched. |
-| **dependency** | `install --dep` | adds `dsh-file-panel` to `<profile>/package.json` dependencies + `dsh.profile.bundles`; the profile's own package manager installs it. The bundle brings its patch layer along, so no hand-written row is written. |
+| **copy** (default) | `install` | files land in `<profile>/node_modules/nyx-file-panel`, inserted from the profile's own patch layer. No package manager runs, no lockfile is touched. |
+| **dependency** | `install --dep` | adds `nyx-file-panel` to `<profile>/package.json` dependencies + `dsh.profile.bundles`; the profile's own package manager installs it. The bundle brings its patch layer along, so no hand-written row is written. |
 
 ```sh
-node bin/dsh-file-panel.mjs status     # what is installed where, and which build
-node bin/dsh-file-panel.mjs doctor     # is this machine able to host it
-node bin/dsh-file-panel.mjs uninstall  # remove the package, the patch row and the dependency
+node bin/nyx-file-panel.mjs status     # what is installed where, and which build
+node bin/nyx-file-panel.mjs doctor     # is this machine able to host it
+node bin/nyx-file-panel.mjs uninstall  # remove the package, the patch row and the dependency
 ```
 
-`--dep` installs from `github:thanhdz235123-commits/dsh-file-panel` by default; pass
-`--spec <spec>` for a fork, a tag (`github:you/dsh-file-panel#v0.3.4`) or a local
+`--dep` installs from `github:thanhdz235123-commits/nyx-dsh-plugins` by default; pass
+`--spec <spec>` for a fork, a tag (`github:you/nyx-file-panel#v0.3.4`) or a local
 path (`file:/path/to/checkout`). Every command is idempotent, and `uninstall`
 removes exactly what `install` wrote — an emptied patch layer is reset to `[]` so
 the YAML stays parseable.
@@ -124,7 +124,7 @@ the YAML stays parseable.
 
 A JSON body/query option per route; the panel itself has no settings file:
 
-- `POST /api/dsh-file-panel.write` refuses any path outside the session
+- `POST /api/nyx-file-panel.write` refuses any path outside the session
   workspace (`403`) and any save whose `expectedSha256` no longer matches (`409`).
 - The poll interval is `POLL_INTERVAL_MS` in `client.js` (default 2000 ms).
 
@@ -136,16 +136,16 @@ session auth fence (`401` without the harness cookie, `403` on a foreign
 
 | Route | Purpose |
 |---|---|
-| `GET /api/dsh-file-panel.file?path&cwd` | content, language, lines, size, mtime, sha256, canonical path, repo info |
-| `GET /api/dsh-file-panel.raw?path&cwd` | raw bytes with a content type (images, PDF, media) |
-| `GET /api/dsh-file-panel.tree?path&cwd` | one directory level (dirs first, 4000-entry cap) |
-| `GET /api/dsh-file-panel.search?q&cwd&kind=files\|content&limit` | quick-open walk, or content search through the harness' bundled ripgrep |
-| `GET /api/dsh-file-panel.changes?sessionId&cwd` | every path changed in the session, with `+N −M` |
-| `GET /api/dsh-file-panel.diff?path&cwd&sessionId&source` | hunks: `session` (`data.meta.diffs`), `git` (`git diff HEAD`), or `none` |
-| `GET /api/dsh-file-panel.stat?path&cwd` | size/mtime (poll) |
-| `POST /api/dsh-file-panel.write` | atomic write + stale guard |
-| `POST /api/dsh-file-panel.revert` | chunk-level undo: replace one hunk's `newText` with its `oldText` under the same guard |
-| `GET /api/dsh-file-panel.health` · `.probe` | service probe · session reader diagnostics |
+| `GET /api/nyx-file-panel.file?path&cwd` | content, language, lines, size, mtime, sha256, canonical path, repo info |
+| `GET /api/nyx-file-panel.raw?path&cwd` | raw bytes with a content type (images, PDF, media) |
+| `GET /api/nyx-file-panel.tree?path&cwd` | one directory level (dirs first, 4000-entry cap) |
+| `GET /api/nyx-file-panel.search?q&cwd&kind=files\|content&limit` | quick-open walk, or content search through the harness' bundled ripgrep |
+| `GET /api/nyx-file-panel.changes?sessionId&cwd` | every path changed in the session, with `+N −M` |
+| `GET /api/nyx-file-panel.diff?path&cwd&sessionId&source` | hunks: `session` (`data.meta.diffs`), `git` (`git diff HEAD`), or `none` |
+| `GET /api/nyx-file-panel.stat?path&cwd` | size/mtime (poll) |
+| `POST /api/nyx-file-panel.write` | atomic write + stale guard |
+| `POST /api/nyx-file-panel.revert` | chunk-level undo: replace one hunk's `newText` with its `oldText` under the same guard |
+| `GET /api/nyx-file-panel.health` · `.probe` | service probe · session reader diagnostics |
 
 ## How the session diff is read
 
@@ -205,9 +205,9 @@ artifacts, and code search from the same column — see the
 
 ## Changelog
 
-- **0.6.2** — editing happens in place. `POST /api/dsh-file-panel.edit` rewrites the conversation instead of branching it: the edited text is appended as a `user/message` carrying `surfaceOp: {op:'replace', start, end}` over the range from the edited message to the end of the surface, with every shadowed node cited in `sourceEventSeqs` — the exact contract DSH's compaction uses. DSH's own prompt path then sends the text (a turn can only start from an appended message, so the copy it appends is collapsed onto the replacement again by `edit-settle`). Measured on the rig: editing the second message of the fixture replaced seqs 11–12 with one new message, session count unchanged, and the original session untouched on disk.
+- **0.6.2** — editing happens in place. `POST /api/nyx-file-panel.edit` rewrites the conversation instead of branching it: the edited text is appended as a `user/message` carrying `surfaceOp: {op:'replace', start, end}` over the range from the edited message to the end of the surface, with every shadowed node cited in `sourceEventSeqs` — the exact contract DSH's compaction uses. DSH's own prompt path then sends the text (a turn can only start from an appended message, so the copy it appends is collapsed onto the replacement again by `edit-settle`). Measured on the rig: editing the second message of the fixture replaced seqs 11–12 with one new message, session count unchanged, and the original session untouched on disk.
 - **0.6.1** — versions you can actually flip through. An edit used to leave a branch that looked like a stray session; now the plugin remembers the family (`localStorage`, keyed by session + turn) and draws `‹ n/m ›` under the message in every version: `‹` opens the previous version, `›` the next, and the current position is shown. The ring is an overlay like the pencil — no DSH DOM is touched, no renderer is shadowed. Verified live: edit a message in `bạn là ai` → branch created, ring drawn in the branch (`‹ 2/2 ›`) and in the original (`‹ 1/2 ›`), `‹` navigates back.
-- **0.6.0** — a sent message can be rewritten and resent. Hover a user message: a ✎ button appears beside it (the plugin's own overlay — the app's DOM is not touched), click it and the message opens in an editor anchored under the bubble, with `Hủy` / `Gửi lại` and ⌘↵ to send. Because DSH's log is append-only, resending branches the session: the fork point is the message *before* the edited one, read from the session log through the host (`/api/dsh-file-panel.chat`), so the branch keeps a clean history, and DSH opens the new session with the edited text already sent into it. The first message of a session has no earlier turn to branch from, so a fresh session in the same directory is created instead. Also in this build: a `chat` host route that returns the session's user turns with their log sequence numbers, and four new checks that drive the whole flow (open, prefill, cancel, branch).
+- **0.6.0** — a sent message can be rewritten and resent. Hover a user message: a ✎ button appears beside it (the plugin's own overlay — the app's DOM is not touched), click it and the message opens in an editor anchored under the bubble, with `Hủy` / `Gửi lại` and ⌘↵ to send. Because DSH's log is append-only, resending branches the session: the fork point is the message *before* the edited one, read from the session log through the host (`/api/nyx-file-panel.chat`), so the branch keeps a clean history, and DSH opens the new session with the edited text already sent into it. The first message of a session has no earlier turn to branch from, so a fresh session in the same directory is created instead. Also in this build: a `chat` host route that returns the session's user turns with their log sequence numbers, and four new checks that drive the whole flow (open, prefill, cancel, branch).
 - **0.5.5** — the file strip works again. Clicking a tab did nothing: the click handler called `activateTab`, which had gone missing in an earlier refactor, so switching back to an already-open file died silently while its ✕ still closed it. The function is back (activate, load what never loaded, paint) and the suite clicks a tab in both directions so it cannot vanish again unnoticed.
 - **0.5.4** — the panel stops closing itself. Clicking a file while it was open used to close it (the click landed "outside" the panel), so the file needed a second click; nothing on the page closes it now. Opening another file switches the panel to it, and the only ways out are the ones the operator asks for: ✕, `Esc`, `⌥⌘F`. The panel also never lives in the layout's details column any more — it always docks — so the app's own panel is never shadowed; when that column opens (a tool call, a search result) the file panel stands down with every tab kept and comes back by itself when the column closes.
 - **0.5.3** — a path in a message is a door, and the rail is parked. DSH makes exactly one thing in a conversation clickable (the chip on a tool row), so a path written in prose or in inline code did nothing at all — which reads as "the plugin is not there". The panel now reads the token under the pointer: `document.caretPositionFromPoint` for prose, the whole code span for inline code (so paths with spaces work), trimmed of punctuation, rejected when it is a URL or a `24/7`, then resolved exactly as written and put through the same on-disk gate — a path that is not there is refused with its own name, never substituted. Paths that really are paths get a dotted underline and a pointer cursor (`debug.clickPaths(false)` turns the whole thing off). The turn navigator is parked by default instead of sitting in the panel's corner (`debug.hideTurnRail(false)` restores it). While the panel is up the conversation gives it room — one scoped rule on the column that already owns that space, removed the moment the panel closes, with a 560px floor for the chat and nothing written into DSH's DOM. `~` now means home on every platform.
@@ -215,7 +215,7 @@ artifacts, and code search from the same column — see the
 - **0.5.1** — the panel stops shadowing the app's own panel. The seat it takes in the layout's `details` slot outranked DSH's own entry, so clicking a tool call opened **the file panel** instead of the tool details — the app's own panel appeared to be broken. The panel now watches the details column and steps aside the moment the layout opens it, and it no longer wraps the layout service's `openDetails` at all (a monkey-patch on a service the app owns is how a plugin takes the app down with it). Loading is also louder: if `apply` fails, the reason is left in `window.__dshFilePanel.error` instead of the plugin silently doing nothing.
 - **0.5.0** — the panel stops touching anything it does not own. All of it is gone: padding injected into the layout's centre column, attributes written onto `body`, DSH elements hidden by class, and the floating `‹ File panel` tab. The panel now draws **only itself** — one fixed-position surface, 32% of the window (300–420px) at the right edge, with the layout's columns left exactly as DSH drew them. Open it by clicking a file path in the chat (or `⌥⌘F`); close it by clicking anywhere outside, `Esc`, or the ✕. A panel that opens with nothing to show now says so instead of drawing nothing.
 - **0.4.3** — the panel sizes itself to the window it is in. Default width is 32% of the viewport (300–420px) instead of a flat 420, the box is `border-box` so the number is the real width, and the conversation is only inset when it keeps at least 700px of content — below that the panel floats over the edge rather than squeezing the chat into a column.
-- **0.4.2** — the panel carries its own black box. The client reports the window it is really running in — build, mode, panel rect, the layout's column widths, how much it inset the chat — to `POST /api/dsh-file-panel.diag`, and the host appends it to `dsh-file-panel-diag.jsonl` next to the harness home; the window title carries the same summary. A report from another machine can now be read instead of guessed at.
+- **0.4.2** — the panel carries its own black box. The client reports the window it is really running in — build, mode, panel rect, the layout's column widths, how much it inset the chat — to `POST /api/nyx-file-panel.diag`, and the host appends it to `nyx-file-panel-diag.jsonl` next to the harness home; the window title carries the same summary. A report from another machine can now be read instead of guessed at.
 - **0.4.1** — the panel fits the room it is given. Whether it takes DSH's own right column is now decided by measuring that column **before** anything mounts (a seat inside a 0px column painted a sliver of overflowing content at the window edge), and when there is no column the slide-over insets the conversation by at most `centre − 520px`, so the chat keeps a readable width instead of being squeezed. DSH's column open ⇒ the panel lives in it, nothing is inset, nothing is covered.
 - **0.4.0** — the panel pushes, it never covers, and there is always a way in. The slide-over now insets the conversation (`centerCol` padding = the panel width) instead of laying over it; a slim `‹ File panel` tab sits on the right edge (click to open/close, `⌥⌘F` from anywhere), and it rides the panel's leading edge while the panel is open. Opening with no file shows the workspace tree. The panel only appears when asked — a file click, the tab, or the shortcut.
 - **0.3.9** — — the slide-over never traps you: clicking anywhere outside it, or pressing Escape, puts the panel away; its width is capped at 45% of the window; and a dock with nothing to show (no tab, no notice) is not drawn at all, so it cannot sit over the conversation looking broken.
@@ -272,7 +272,7 @@ Published, it installs into a profile either by adding its name to
 `dsh.profile.bundles` in the profile's `package.json`, or with the bundled installer:
 
 ```
-npx dsh-file-panel install
+npx nyx-file-panel install
 ```
 
 ## License

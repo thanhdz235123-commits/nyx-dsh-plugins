@@ -13,7 +13,7 @@ import { createServer } from 'node:http'
 import { appendFileSync, writeFileSync } from 'node:fs'
 
 const port = Number(process.argv[2] ?? process.env.MOCK_LLM_PORT ?? 63299)
-const dump = process.argv[3] ?? process.env.MOCK_LLM_DUMP ?? '/tmp/dsh-message-edit/mock-requests.jsonl'
+const dump = process.argv[3] ?? process.env.MOCK_LLM_DUMP ?? '/tmp/nyx-message-edit/mock-requests.jsonl'
 const chunkDelayMs = Number(process.env.MOCK_LLM_DELAY_MS ?? 0)
 writeFileSync(dump, '')
 

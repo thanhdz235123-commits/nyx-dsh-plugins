@@ -1,7 +1,3 @@
 node_modules/
-*.log
 .DS_Store
-*.tgz
-.dsh-fp-*
-.local/
-tools/
+*.log

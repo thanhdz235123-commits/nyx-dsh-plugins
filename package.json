@@ -1,77 +1,28 @@
 {
-  "name": "dsh-file-panel",
-  "version": "0.6.3",
-  "description": "Antigravity-style in-app file panel for DeepSeek Harness: file links open a right-side preview / diff / editor column instead of the OS default app.",
+  "name": "nyx-dsh-plugins",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Nyx plugins for DeepSeek Harness — a right-side file panel and true edit-message, both drawn with the harness's own UI.",
   "type": "module",
-  "main": "lib/index.js",
-  "types": "lib/types/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./lib/types/index.d.ts",
-      "default": "./lib/index.js"
-    },
-    "./client": {
-      "types": "./lib/types/client/index.d.ts",
-      "default": "./lib/client.js"
-    },
-    "./cordis.patch.yml": "./cordis.patch.yml",
-    "./package.json": "./package.json"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thanhdz235123-commits/nyx-dsh-plugins.git"
   },
-  "bin": {
-    "dsh-file-panel": "./bin/dsh-file-panel.mjs"
-  },
-  "files": [
-    "lib",
-    "cordis.patch.yml",
-    "bin",
-    "docs",
-    "README.md",
-    "README.vn.md",
-    "LICENSE"
+  "workspaces": [
+    "packages/*"
   ],
-  "engines": {
-    "node": ">=20"
-  },
   "keywords": [
     "dsh",
     "deepseek-harness",
     "dsh-plugin",
-    "file-panel",
-    "diff",
-    "viewer"
+    "nyx"
   ],
-  "author": "dsh-file-panel contributors",
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/thanhdz235123-commits/dsh-file-panel.git"
-  },
-  "homepage": "https://github.com/thanhdz235123-commits/dsh-file-panel#readme",
-  "bugs": {
-    "url": "https://github.com/thanhdz235123-commits/dsh-file-panel/issues"
-  },
-  "publishConfig": {
-    "access": "public"
-  },
-  "dsh": {
-    "bundle": {
-      "patch": "./cordis.patch.yml"
-    },
-    "client": {
-      "inject": [
-        "@deepseek-ai/dsh-client-ui-primitives",
-        "@deepseek-ai/dsh-client-ui-slots"
-      ],
-      "immediately": true,
-      "platform": "web"
-    }
-  },
-  "peerDependencies": {
-    "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-client-ui-primitives": "^0.1.2-rc.1",
-    "@deepseek-ai/dsh-client-ui-slots": "^0.1.2-rc.1"
+  "engines": {
+    "node": ">=20"
   },
   "scripts": {
-    "verify": "node tools/verify.mjs"
+    "check": "node --check packages/nyx-file-panel/lib/index.js && node --check packages/nyx-file-panel/lib/client.js && node --check packages/nyx-message-edit/lib/index.js && node --check packages/nyx-message-edit/lib/client.js",
+    "pack": "npm pack --dry-run --workspaces"
   }
 }

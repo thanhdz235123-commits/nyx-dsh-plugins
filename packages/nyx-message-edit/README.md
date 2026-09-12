@@ -1,4 +1,4 @@
-# dsh-message-edit
+# nyx-message-edit
 
 Real **edit message** for DeepSeek Harness.
 
@@ -24,7 +24,7 @@ Everything from the edited message onward — including **the old answer to that
 ## Install
 
 ```sh
-npx --yes github:thanhdz235123-commits/dsh-message-edit install
+npx --yes github:thanhdz235123-commits/nyx-dsh-plugins install
 ```
 
 Then **restart DSH Desktop** once (the host half registers an Agent hook and its routes at harness start). Later client-only updates just need a window reload.
@@ -32,11 +32,11 @@ Then **restart DSH Desktop** once (the host half registers an Agent hook and its
 Other shapes:
 
 ```sh
-node bin/dsh-message-edit.mjs install --home "/path/to/harness" --profile web
-node bin/dsh-message-edit.mjs install --dep        # package.json dependency + bundle
-node bin/dsh-message-edit.mjs status
-node bin/dsh-message-edit.mjs uninstall
-node bin/dsh-message-edit.mjs doctor
+node bin/nyx-message-edit.mjs install --home "/path/to/harness" --profile web
+node bin/nyx-message-edit.mjs install --dep        # package.json dependency + bundle
+node bin/nyx-message-edit.mjs status
+node bin/nyx-message-edit.mjs uninstall
+node bin/nyx-message-edit.mjs doctor
 ```
 
 Works on macOS / Windows / Linux: the harness home is resolved the same way DSH resolves it, and no harness package is imported by the host half.
@@ -77,7 +77,7 @@ The transcript rows the edit removed are addressed by their own `data-chat-flow-
 
 Nothing in the app bundle is modified. The host half imports **zero** harness packages; it uses the documented plugin surfaces only:
 
-- `connection.fetch.register` for `/api/dsh-message-edit.*`
+- `connection.fetch.register` for `/api/nyx-message-edit.*`
 - `ctx.on('agent/pre-step', …)` — the Agent step waterfall the harness itself uses for prompt assembly
 - `session.surface.nodes`, `session.eventAt`, `session.append`, `session.ownEvents`
 - `agent.wakeDriver()`, `agent.cancel()`, `agent.whenIdle()`
@@ -88,10 +88,10 @@ Nothing in the app bundle is modified. The host half imports **zero** harness pa
 
 | Route | Method | Purpose |
 | --- | --- | --- |
-| `/api/dsh-message-edit.state?sessionId=` | GET | user messages currently on the surface + the transcript rows earlier edits removed |
-| `/api/dsh-message-edit.edit` | POST | `{ sessionId, messageId, text }` → truncate + replace + regenerate |
-| `/api/dsh-message-edit.health` | GET | build, pending edits, whether the Agent service is reachable |
-| `/api/dsh-message-edit.diag` | POST | client diagnostic sink |
+| `/api/nyx-message-edit.state?sessionId=` | GET | user messages currently on the surface + the transcript rows earlier edits removed |
+| `/api/nyx-message-edit.edit` | POST | `{ sessionId, messageId, text }` → truncate + replace + regenerate |
+| `/api/nyx-message-edit.health` | GET | build, pending edits, whether the Agent service is reachable |
+| `/api/nyx-message-edit.diag` | POST | client diagnostic sink |
 
 Error codes: `not-found` (message no longer on the surface), `bad-request` (empty text), `busy` (agent could not be quiesced), `timeout`, `unsupported`.
 
@@ -171,7 +171,7 @@ Published, it installs into a profile either by adding its name to
 `dsh.profile.bundles` in the profile's `package.json`, or with the bundled installer:
 
 ```
-npx dsh-message-edit install
+npx nyx-message-edit install
 ```
 
 ## License

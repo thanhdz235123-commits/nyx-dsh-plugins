@@ -1,10 +1,10 @@
 /**
- * dsh-file-panel — client half (bootstrap).
+ * nyx-file-panel — client half (bootstrap).
  * Full UI lands in the next iteration; this revision proves the module loads,
  * wraps the workspace-path opener, and exposes a debug face for verification.
  */
 window.__ModuleLoader__.load({
-  id: 'dsh-file-panel',
+  id: 'nyx-file-panel',
   factory: (require) => {
     const module = { exports: {} };
     const exports = module.exports;
@@ -15,13 +15,13 @@ window.__ModuleLoader__.load({
     try {
       primitives = require('@deepseek-ai/dsh-client-ui-primitives');
     } catch (error) {
-      console.warn('[dsh-file-panel] primitives unavailable:', error?.message ?? error);
+      console.warn('[nyx-file-panel] primitives unavailable:', error?.message ?? error);
     }
 
 
-    const STYLE_ID = 'dsh-file-panel-style';
-    const DOCK_HOST_ID = 'dsh-file-panel-dock-host';
-    const LAYOUT_ROOM_ID = 'dsh-file-panel-room';
+    const STYLE_ID = 'nyx-file-panel-style';
+    const DOCK_HOST_ID = 'nyx-file-panel-dock-host';
+    const LAYOUT_ROOM_ID = 'nyx-file-panel-room';
     const RAIL_STYLE_ID = 'dfp-hide-turn-rail';
     const SEAT_PRIORITY = -1000;
     const POLL_INTERVAL_MS = 2000;
@@ -58,7 +58,7 @@ window.__ModuleLoader__.load({
         try {
           listener();
         } catch (error) {
-          console.warn('[dsh-file-panel] listener failed:', error);
+          console.warn('[nyx-file-panel] listener failed:', error);
         }
       }
     }
@@ -355,7 +355,7 @@ window.__ModuleLoader__.load({
       }
       const style = document.createElement('style');
       style.id = LAYOUT_ROOM_ID;
-      style.dataset.plugin = 'dsh-file-panel';
+      style.dataset.plugin = 'nyx-file-panel';
       style.dataset.room = String(room);
       style.textContent = `[class*="centerCol"]{padding-right:${room}px}`;
       document.head.appendChild(style);
@@ -380,7 +380,7 @@ window.__ModuleLoader__.load({
     // host API
     // ------------------------------------------------------------------
 
-    const rawUrl = (path, cwd) => `/api/dsh-file-panel.raw?${query({ path, cwd })}`;
+    const rawUrl = (path, cwd) => `/api/nyx-file-panel.raw?${query({ path, cwd })}`;
 
     function query(params) {
       const search = new URLSearchParams();
@@ -392,7 +392,7 @@ window.__ModuleLoader__.load({
     }
 
     async function callHost(route, params) {
-      const response = await fetch(`/api/dsh-file-panel.${route}?${query(params)}`, { headers: { accept: 'application/json' } });
+      const response = await fetch(`/api/nyx-file-panel.${route}?${query(params)}`, { headers: { accept: 'application/json' } });
       const payload = await response.json().catch(() => null);
       if (payload === null) throw new Error(`${route}: malformed response (${response.status})`);
       if (payload.ok !== true) throw new Error(payload.error?.message ?? 'request failed');
@@ -400,7 +400,7 @@ window.__ModuleLoader__.load({
     }
 
     async function postHost(route, body) {
-      const response = await fetch(`/api/dsh-file-panel.${route}`, {
+      const response = await fetch(`/api/nyx-file-panel.${route}`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body)
@@ -423,7 +423,7 @@ window.__ModuleLoader__.load({
       if (document.getElementById(STYLE_ID) !== null) return;
       const style = document.createElement('style');
       style.id = STYLE_ID;
-      style.dataset.plugin = 'dsh-file-panel';
+      style.dataset.plugin = 'nyx-file-panel';
       style.textContent = `
 .dfp-root { display:flex; flex-direction:column; height:100%; min-height:0; color:var(--dsw-alias-label-primary, inherit); font-size:13px; overflow:hidden; }
 .dfp-header { display:flex; align-items:center; gap:6px; padding:8px 10px 6px; border-bottom:.5px solid var(--dsw-alias-border-l2, rgba(128,128,128,.25)); }
@@ -2124,7 +2124,7 @@ body[data-ds-dark-theme] .dfp-root {
         try {
           seatDisposer();
         } catch (error) {
-          console.warn('[dsh-file-panel] seat release failed:', error);
+          console.warn('[nyx-file-panel] seat release failed:', error);
         }
         seatDisposer = null;
       }
@@ -2206,12 +2206,12 @@ body[data-ds-dark-theme] .dfp-root {
             try {
               await openPath(ctx, target);
             } catch (error) {
-              console.warn('[dsh-file-panel] open failed, falling back to the app opener:', error?.message ?? error);
+              console.warn('[nyx-file-panel] open failed, falling back to the app opener:', error?.message ?? error);
               return await originalOpenWorkspacePath(request, signal);
             }
             return { ok: true, value: { opened: true } };
           } catch (error) {
-            console.warn('[dsh-file-panel] opener wrapper failed:', error?.message ?? error);
+            console.warn('[nyx-file-panel] opener wrapper failed:', error?.message ?? error);
             try {
               return await originalOpenWorkspacePath(request, signal);
             } catch (inner) {
@@ -2362,7 +2362,7 @@ body[data-ds-dark-theme] .dfp-root {
           void postHost('diag', { reason: 'pathclick', build: CLIENT_BUILD, source: candidate.source, target: candidate.path.slice(0, 240) }).catch(() => {});
           void openPath(ctx, candidate.path);
         } catch (error) {
-          console.warn('[dsh-file-panel] path click failed:', error?.message ?? error);
+          console.warn('[nyx-file-panel] path click failed:', error?.message ?? error);
         }
       };
       document.addEventListener('click', handler, true);
@@ -3003,7 +3003,7 @@ body[data-ds-dark-theme] .dfp-root {
           return;
         }
       } catch (error) {
-        console.warn('[dsh-file-panel] changes failed:', error.message);
+        console.warn('[nyx-file-panel] changes failed:', error.message);
       } finally {
         mutate(sessionId, (s) => { s.loadingChanges = false });
       }
@@ -3119,7 +3119,7 @@ body[data-ds-dark-theme] .dfp-root {
         await refresh(sessionId);
         await loadChanges(sessionId);
       } catch (error) {
-        console.warn('[dsh-file-panel] revert file failed:', error.message);
+        console.warn('[nyx-file-panel] revert file failed:', error.message);
         mutate(sessionId, (s) => {
           const current = activeTab(s);
           if (current !== null) current.diffError = error.message;
@@ -3136,7 +3136,7 @@ body[data-ds-dark-theme] .dfp-root {
         }
         await ctx.remote.session.openWorkspacePath({ path: tab.path });
       } catch (error) {
-        console.warn('[dsh-file-panel] external open failed:', error?.message ?? error);
+        console.warn('[nyx-file-panel] external open failed:', error?.message ?? error);
       }
     }
 
@@ -3215,7 +3215,7 @@ body[data-ds-dark-theme] .dfp-root {
           s.palette.loading = false;
           s.palette.results = [];
         });
-        console.warn('[dsh-file-panel] search failed:', error.message);
+        console.warn('[nyx-file-panel] search failed:', error.message);
       }
     }
 
@@ -3275,7 +3275,7 @@ body[data-ds-dark-theme] .dfp-root {
         if (state.pending !== null && Date.now() - (state.pending.since ?? 0) > 8000) {
           const stale = state.pending.path;
           mutate(sessionId, (s) => { s.pending = null });
-          console.warn('[dsh-file-panel] resolution timed out for', stale);
+          console.warn('[nyx-file-panel] resolution timed out for', stale);
         }
         const tab = activeTab(state);
         if (tab === null || tab.path === null) return;
@@ -3308,7 +3308,7 @@ body[data-ds-dark-theme] .dfp-root {
         applyInner(ctx);
       } catch (error) {
         window.__dshFilePanel = { ...(window.__dshFilePanel ?? {}), early: false, error: String(error?.stack ?? error) };
-        console.warn('[dsh-file-panel] apply failed:', error);
+        console.warn('[nyx-file-panel] apply failed:', error);
       }
     }
 
@@ -3322,7 +3322,7 @@ body[data-ds-dark-theme] .dfp-root {
           previous.retire();
           retired = true;
         } catch (error) {
-          console.warn('[dsh-file-panel] could not retire the previous generation:', error?.message ?? error);
+          console.warn('[nyx-file-panel] could not retire the previous generation:', error?.message ?? error);
         }
       }
       const swept = sweepStrays();
@@ -3352,7 +3352,7 @@ body[data-ds-dark-theme] .dfp-root {
       }).catch(() => {});
       installLayoutYield(ctx);
       const wrapped = installOpenerInterceptor(ctx);
-      if (wrapped !== true) console.warn('[dsh-file-panel] opener not wrapped; file links keep opening externally');
+      if (wrapped !== true) console.warn('[nyx-file-panel] opener not wrapped; file links keep opening externally');
       installPathClicker(ctx);
       {
         const active = currentSessionId(ctx);
@@ -3486,7 +3486,7 @@ body[data-ds-dark-theme] .dfp-root {
           }))
         }
       };
-      console.log(`[dsh-file-panel] ready ${CLIENT_BUILD}`, { wrapped, primitives: primitives !== null });
+      console.log(`[nyx-file-panel] ready ${CLIENT_BUILD}`, { wrapped, primitives: primitives !== null });
       void postHost('diag', {
         reason: 'apply',
         build: CLIENT_BUILD,

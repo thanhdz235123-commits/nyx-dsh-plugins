@@ -1,5 +1,5 @@
 /**
- * dsh-message-edit — host half.
+ * nyx-message-edit — host half.
  *
  * Real edit-message for DeepSeek Harness, built out of the Session's own
  * surface mechanism instead of a side conversation store:
@@ -19,7 +19,7 @@
  * the request build, streaming, the model selector and the system prompt are
  * all the harness's own.
  *
- * @module dsh-message-edit
+ * @module nyx-message-edit
  */
 
 import { randomUUID } from 'node:crypto'
@@ -27,18 +27,18 @@ import { appendFile, mkdir } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import path from 'node:path'
 
-export const name = 'dsh-message-edit'
+export const name = 'nyx-message-edit'
 /** Bumped per host revision; the health route reports it. */
 export const BUILD = '0.1.0'
 export const inject = ['connection', 'agents']
 
-const ROUTE_STATE = '/api/dsh-message-edit.state'
-const ROUTE_EDIT = '/api/dsh-message-edit.edit'
-const ROUTE_HEALTH = '/api/dsh-message-edit.health'
-const ROUTE_DIAG = '/api/dsh-message-edit.diag'
+const ROUTE_STATE = '/api/nyx-message-edit.state'
+const ROUTE_EDIT = '/api/nyx-message-edit.edit'
+const ROUTE_HEALTH = '/api/nyx-message-edit.health'
+const ROUTE_DIAG = '/api/nyx-message-edit.diag'
 
 /** Source marker written into every replacement message this plugin owns. */
-const EDIT_MARKER = 'dsh-message-edit'
+const EDIT_MARKER = 'nyx-message-edit'
 
 /**
  * Per-session edit that has been requested but not yet committed to the log.
@@ -49,7 +49,7 @@ const EDIT_MARKER = 'dsh-message-edit'
 const pendingEdits = new Map()
 
 /**
- * Append one line to `<DSH_HOME>/dsh-message-edit-diag.jsonl`.
+ * Append one line to `<DSH_HOME>/nyx-message-edit-diag.jsonl`.
  *
  * A failed edit is otherwise invisible from the outside: the reader sees a
  * button do nothing and there is no trace to read. Every attempt and every
@@ -58,7 +58,7 @@ const pendingEdits = new Map()
 async function diag(ctx, record) {
   try {
     const home = ctx.get('homePaths')?.dshHome ?? process.env.DSH_HOME ?? path.join(homedir(), '.dsh')
-    const file = path.join(home, 'dsh-message-edit-diag.jsonl')
+    const file = path.join(home, 'nyx-message-edit-diag.jsonl')
     await mkdir(path.dirname(file), { recursive: true })
     await appendFile(file, `${JSON.stringify({ at: Date.now(), ...record })}\n`)
   } catch {
@@ -337,14 +337,14 @@ function installPreStepHook(ctx) {
       const history = editHistory.get(sessionId) ?? []
       history.push(record)
       editHistory.set(sessionId, history)
-      ctx.logger?.info?.(`[dsh-message-edit] ${sessionId}: replaced surface ${committed.start}-${committed.end} with seq ${committed.seq} (${committed.shadowedCount} nodes shadowed)`)
+      ctx.logger?.info?.(`[nyx-message-edit] ${sessionId}: replaced surface ${committed.start}-${committed.end} with seq ${committed.seq} (${committed.shadowedCount} nodes shadowed)`)
       edit.resolve?.(record)
       return { ...decision, messages: kept }
     } catch (error) {
       // Nothing was committed, so restore the turn's own step accounting and
       // let the loop behave exactly as it would without an edit.
       if (bumped && agent.phase?.kind === 'running') agent.phase.step = 0
-      ctx.logger?.warn?.(`[dsh-message-edit] edit failed for ${sessionId}: ${error instanceof Error ? error.message : String(error)}`)
+      ctx.logger?.warn?.(`[nyx-message-edit] edit failed for ${sessionId}: ${error instanceof Error ? error.message : String(error)}`)
       void diag(ctx, {
         sessionId: String(sessionId).slice(0, 48),
         messageId: String(edit.messageId).slice(0, 48),
@@ -626,14 +626,14 @@ export function apply(ctx) {
   installPreStepHook(ctx)
   const connection = ctx.get('connection')
   if (connection === undefined) {
-    ctx.logger?.warn?.('[dsh-message-edit] connection service unavailable; routes not registered')
+    ctx.logger?.warn?.('[nyx-message-edit] connection service unavailable; routes not registered')
     return
   }
   const guard = (handler) => async (request) => {
     try {
       return await handler(request)
     } catch (error) {
-      ctx.logger?.debug?.(`[dsh-message-edit] ${request.url} failed: ${error instanceof Error ? error.message : String(error)}`)
+      ctx.logger?.debug?.(`[nyx-message-edit] ${request.url} failed: ${error instanceof Error ? error.message : String(error)}`)
       return failure(error)
     }
   }
@@ -649,5 +649,5 @@ export function apply(ctx) {
   // The file exists from the moment the plugin is alive, so a path quoted to the
   // reader is a path that opens — including before the first edit is ever tried.
   void diag(ctx, { phase: 'loaded', build: BUILD })
-  ctx.logger?.info?.(`[dsh-message-edit] ${BUILD} ready on /api/dsh-message-edit.*`)
+  ctx.logger?.info?.(`[nyx-message-edit] ${BUILD} ready on /api/nyx-message-edit.*`)
 }

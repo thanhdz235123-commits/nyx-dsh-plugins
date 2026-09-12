@@ -1,6 +1,6 @@
 /**
- * Client half of `dsh-file-panel`, loaded by the harness module loader
- * (`window.__ModuleLoader__.load`, id `dsh-file-panel`).
+ * Client half of `nyx-file-panel`, loaded by the harness module loader
+ * (`window.__ModuleLoader__.load`, id `nyx-file-panel`).
  *
  * Wraps the workspace-path opener, decorates the transcript with path links,
  * and renders the right-hand panel: preview, changes, review, files, edit.
