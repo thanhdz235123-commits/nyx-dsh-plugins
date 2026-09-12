@@ -61,7 +61,7 @@ window.__ModuleLoader__.load({
 
     /** The build this client is. Shown in the footer so it is never a guess
      *  which version a window is running. */
-    const CLIENT_BUILD = '0.4.3';
+    const CLIENT_BUILD = '0.5.0';
 
     let tabSeq = 0;
 
@@ -239,7 +239,11 @@ window.__ModuleLoader__.load({
         mode: runtime.mode,
         visible: runtime.visible,
         owner: runtime.owner,
-        docked: document.body.getAttribute('data-dfp-docked'),
+        panelContents: runtime.owner === null ? null : (() => {
+          const state = sessionStates.get(runtime.owner);
+          if (state === undefined) return null;
+          return { surface: state.tab, tabs: state.tabs.length, notice: state.notice === null ? null : state.notice.path, pending: state.pending === null ? null : state.pending.path };
+        }),
         dockWidth: runtime.dockWidth,
         panel: box(root),
         panelDock: root === null ? null : root.getAttribute('data-dock'),
@@ -271,7 +275,7 @@ window.__ModuleLoader__.load({
         `pad${center === null ? '-' : getComputedStyle(center).paddingRight}`,
         `col${details === null ? '-' : Math.round(details.getBoundingClientRect().width)}`,
         `vw${window.innerWidth}`,
-        document.body.getAttribute('data-dfp-docked') === null ? 'nodock' : 'docked'
+        runtime.owner === null ? 'nosession' : 'session'
       ].join(' ');
       document.title = `${base} [dfp:${strip}]`;
     }
@@ -306,15 +310,10 @@ window.__ModuleLoader__.load({
         && runtime.mode === 'overlay'
         && state !== undefined
         && (state.tabs.length > 0 || state.notice !== null || state.pending !== null || state.tab !== 'preview');
-      if (showing === true) {
-        const push = pushWidth();
-        document.body.setAttribute('data-dfp-docked', '1');
-        document.body.setAttribute('data-dfp-push', push > 0 ? '1' : '0');
-        document.body.style.setProperty('--dfp-dock-width', `${clampDockWidth(runtime.dockWidth)}px`);
-        document.body.style.setProperty('--dfp-push', `${push}px`);
-      } else {
-        document.body.removeAttribute('data-dfp-docked');
-      }
+      // The panel is a guest: it draws itself and touches nothing the layout
+      // owns. No body attributes, no padding on DSH's columns, no hiding of
+      // DSH elements — those are the changes that can break somebody's UI.
+      void showing;
     }
 
     function activeTab(state) {
@@ -524,16 +523,15 @@ body[data-ds-dark-theme] .dfp-root {
    conversation is narrowed, never covered. DSH keeps the details column at 0px
    unless it has a details target of its own, so a plugin cannot use that column
    — this is the closest honest equivalent. */
-body[data-dfp-docked="1"] [class*="centerCol"] { padding-right: var(--dfp-push, 0px); }
-body[data-dfp-docked="1"] [class*="handle"] { display: none; }
+/* (removed) the panel never pads the layout's columns — it draws itself only. */
+/* (removed) never touch elements the layout owns. */
 /* The way back in: a slim tab on the right edge, the only thing the plugin
    draws while the panel is closed. */
-.dfp-toggle { position:fixed; right:0; top:50%; transform:translateY(-50%); z-index:39; appearance:none; border:.5px solid var(--dsw-alias-border-l2, rgba(128,128,128,.35)); border-right:none; border-radius:8px 0 0 8px; background:var(--dsw-alias-bg-module-platform, rgba(30,30,34,.85)); color:var(--dsw-alias-label-secondary, inherit); font:inherit; font-size:11px; line-height:1; padding:10px 5px; cursor:pointer; writing-mode:vertical-rl; opacity:.45; transition:opacity .15s; }
+.dfp-toggle { display:none; position:fixed; right:0; top:50%; transform:translateY(-50%); z-index:39; appearance:none; border:.5px solid var(--dsw-alias-border-l2, rgba(128,128,128,.35)); border-right:none; border-radius:8px 0 0 8px; background:var(--dsw-alias-bg-module-platform, rgba(30,30,34,.85)); color:var(--dsw-alias-label-secondary, inherit); font:inherit; font-size:11px; line-height:1; padding:10px 5px; cursor:pointer; writing-mode:vertical-rl; opacity:.45; transition:opacity .15s; }
 .dfp-toggle:hover { opacity:1; color:var(--dsw-alias-label-primary, inherit); }
 /* While the panel is open the tab rides its leading edge, so it closes it
    instead of hiding behind it. */
-body[data-dfp-docked="1"] .dfp-toggle { right: var(--dfp-dock-width, 420px); opacity:.8; }
-body[data-dfp-docked="0"] .dfp-toggle { right: 0; }
+/* (removed) */
 .dfp-dock-handle { position:absolute; left:-4px; top:0; bottom:0; width:8px; z-index:2; cursor:col-resize; background:transparent; touch-action:none; pointer-events:auto; border-radius:4px; }
 .dfp-root[data-dock="true"] { overflow:visible; }
 .dfp-dock-handle:hover { background:var(--dsw-alias-brand-primary,#4d6bfe); opacity:.4; }
@@ -1924,6 +1922,8 @@ body[data-dfp-docked="0"] .dfp-toggle { right: 0; }
     /** The toggle tab lives in the document, not in the layout's slots. */
     function ensureToggleHost() {
       if (typeof document === 'undefined' || document.body === null) return;
+      // The plugin draws nothing at rest: no floating tab, no tab in the layout.
+      return;
       if (document.getElementById('dfp-toggle') !== null) return;
       const tab = document.createElement('button');
       tab.id = 'dfp-toggle';
