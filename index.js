@@ -913,7 +913,7 @@ async function handleDiag(request) {
 const FILE_PATH_TOOLS = new Set(['read', 'write', 'edit'])
 const FILE_PATH_KEYS = ['path', 'file_path']
 
-/** @type {Map<string, { count: number, paths: string[] }>} */
+/** @type {Map<string, { count: number, paths: string[], source: string }>} */
 const recordedPathCache = new Map()
 
 /**
@@ -963,12 +963,44 @@ async function handleReferences(ctx, request) {
   const url = new URL(request.url)
   const sessionId = url.searchParams.get('sessionId') ?? ''
   if (sessionId === '') return ok({ paths: [], source: 'none' })
+
+  // A click has to answer now. The live session is already in memory, so the
+  // scan is a walk over its own event list; the durable query below is only for
+  // a session this process does not hold (cold history, never the one being
+  // read), and it can take tens of seconds on a large log.
+  const live = liveSessionEvents(ctx, sessionId)
   const cached = recordedPathCache.get(sessionId)
+  if (live !== null) {
+    if (cached !== undefined && cached.count === live.length && cached.source === 'live') {
+      return ok({ paths: cached.paths, source: 'cache' })
+    }
+    const paths = recordedPaths(live)
+    recordedPathCache.set(sessionId, { count: live.length, paths, source: 'live' })
+    return ok({ paths, source: 'live' })
+  }
+
   const events = await loadSessionEventsFromQuery(ctx, sessionId)
-  if (cached !== undefined && events.length === cached.count) return ok({ paths: cached.paths, source: 'cache' })
+  if (cached !== undefined && cached.count === events.length) return ok({ paths: cached.paths, source: 'cache' })
   const paths = recordedPaths(events)
-  recordedPathCache.set(sessionId, { count: events.length, paths })
+  recordedPathCache.set(sessionId, { count: events.length, paths, source: 'query' })
   return ok({ paths, source: events.length > 0 ? 'query' : 'none' })
+}
+
+/**
+ * Events of one live agent's session, read straight out of memory.
+ * @param ctx - host plugin context.
+ * @param sessionId - session to read.
+ * @returns the event list, or null when this process does not hold the session.
+ */
+function liveSessionEvents(ctx, sessionId) {
+  try {
+    const session = ctx.get('agents')?.get?.(sessionId)?.session
+    if (session === undefined || session === null) return null
+    const events = session.ownEvents()
+    return Array.isArray(events) ? events : null
+  } catch {
+    return null
+  }
 }
 
 /** @param {Request} request */

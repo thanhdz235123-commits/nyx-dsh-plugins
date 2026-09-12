@@ -2223,6 +2223,7 @@ body[data-ds-dark-theme] .dfp-root {
      */
     let clickPaths = true;
     let pathClickHandler = null;
+    let pathWarmTimer = 0;
     let pathMarkerTimer = 0;
 
     const PATH_BREAK = /[\s"'`<>|()[\]{}]/;
@@ -2573,31 +2574,41 @@ body[data-ds-dark-theme] .dfp-root {
      * link that points at something which is not there says so, with the exact
      * absolute path it tried, so nobody has to wonder which file was opened.
      */
-    /** How long the session's recorded-path answer is reused. */
-    const RECORDED_PATHS_TTL_MS = 4000;
+    /** How long a recorded-path answer is trusted before it is refreshed. */
+    const RECORDED_PATHS_TTL_MS = 20000;
 
     /** @type {Map<string, { at: number, paths: string[] }>} */
     const recordedPathsCache = new Map();
 
+    /** One in-flight refresh per session; a click never waits on it. */
+    let recordedPathsWarming = null;
+
     /**
-     * The session's own record of exact file paths: every `path` / `file_path`
-     * argument a read/write/edit call carried. This is the same source DSH's
-     * own file chips use, so a click resolves to the file the session really
-     * touched instead of a name joined onto a directory.
-     * @param ctx - client context.
+     * The session's record of exact file paths: every `path` / `file_path`
+     * argument a read/write/edit call carried — the same source DSH's own file
+     * chips use. It is refreshed in the background so a click is answered from
+     * memory instead of blocking on a cold session scan.
      * @param sessionId - session whose log is read.
-     * @returns the recorded paths, or [] when the host cannot answer.
+     * @returns the cached paths, or [] when nothing is cached yet.
      */
-    async function recordedPathsFor(ctx, sessionId) {
+    function recordedPathsFor(sessionId) {
       const cached = recordedPathsCache.get(sessionId);
-      if (cached !== undefined && Date.now() - cached.at < RECORDED_PATHS_TTL_MS) return cached.paths;
+      if (cached === undefined || Date.now() - cached.at >= RECORDED_PATHS_TTL_MS) void warmRecordedPaths(sessionId);
+      return cached?.paths ?? [];
+    }
+
+    /** Refresh one session's recorded paths without blocking the caller. */
+    async function warmRecordedPaths(sessionId) {
+      if (recordedPathsWarming === sessionId) return;
+      recordedPathsWarming = sessionId;
       try {
         const answer = await callHost('references', { sessionId });
         const paths = Array.isArray(answer?.paths) ? answer.paths : [];
         recordedPathsCache.set(sessionId, { at: Date.now(), paths });
-        return paths;
       } catch {
-        return cached?.paths ?? [];
+        /* keep whatever the last good answer was */
+      } finally {
+        if (recordedPathsWarming === sessionId) recordedPathsWarming = null;
       }
     }
 
@@ -2643,7 +2654,7 @@ body[data-ds-dark-theme] .dfp-root {
       // ordinary workspace-root resolution apply.
       let recorded = null;
       if (asWritten !== true && sessionId !== null && sessionId !== undefined) {
-        recorded = exactRecordedPath(requested, await recordedPathsFor(ctx, sessionId));
+        recorded = exactRecordedPath(requested, recordedPathsFor(sessionId));
       }
       if (recorded !== null) trace(sessionState(sessionId), 'link-recorded', { requested, path: recorded });
       const absolute = asWritten === true
@@ -3209,6 +3220,14 @@ body[data-ds-dark-theme] .dfp-root {
       const wrapped = installOpenerInterceptor(ctx);
       if (wrapped !== true) console.warn('[dsh-file-panel] opener not wrapped; file links keep opening externally');
       installPathClicker(ctx);
+      {
+        const active = currentSessionId(ctx);
+        if (active !== null && active !== undefined) void warmRecordedPaths(active);
+        pathWarmTimer = window.setInterval(() => {
+          const current = currentSessionId(ctx);
+          if (current !== null && current !== undefined) void warmRecordedPaths(current);
+        }, POLL_INTERVAL_MS * 5);
+      }
       syncDockLayout();
       watchSessions(ctx);
       startPolling(ctx);
