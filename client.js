@@ -33,12 +33,16 @@ window.__ModuleLoader__.load({
      */
     const USER_KIND_PREFIXES = ['input-message', 'dsh-message-edit', 'steering']
     /**
-     * The picker's two glyphs, copied from `@deepseek-ai/dsh-client-ui-primitives`
-     * (`IconChevronDownOutline14`, `IconCheckOutline16`) so the frame's model chip
-     * is drawn with the same marks as the composer's.
+     * The picker's marks, copied verbatim from `@deepseek-ai/dsh-client-ui-primitives`
+     * (`IconChevronDownOutline14`, `IconChevronRightOutline14`, `IconCheckOutline16`,
+     * `IconSearchOutline16`) — the composer's own chip and menu are drawn with these
+     * marks, so an edit frame is drawn with them too.
      */
-    const CHEVRON_PATH = 'M11.8486 5.5L11.4238 5.92383L8.69727 8.65137C8.44157 8.90706 8.21562 9.13382 8.01172 9.29785C7.79912 9.46883 7.55595 9.61756 7.25 9.66602C7.08435 9.69222 6.91565 9.69222 6.75 9.66602C6.44405 9.61756 6.20088 9.46883 5.98828 9.29785C5.78438 9.13382 5.55843 8.90706 5.30273 8.65137L2.57617 5.92383L2.15137 5.5L3 4.65137L3.42383 5.07617L6.15137 7.80273C6.42595 8.07732 6.59876 8.24849 6.74023 8.3623C6.87291 8.46904 6.92272 8.47813 6.9375 8.48047C6.97895 8.48703 7.02105 8.48703 7.0625 8.48047C7.07728 8.47813 7.12709 8.46904 7.25977 8.3623C7.40124 8.24849 7.57405 8.07732 7.84863 7.80273L10.5762 5.07617L11 4.65137L11.8486 5.5Z'
+    const CHEVRON_DOWN_PATH = 'M11.8486 5.5L11.4238 5.92383L8.69727 8.65137C8.44157 8.90706 8.21562 9.13382 8.01172 9.29785C7.79912 9.46883 7.55595 9.61756 7.25 9.66602C7.08435 9.69222 6.91565 9.69222 6.75 9.66602C6.44405 9.61756 6.20088 9.46883 5.98828 9.29785C5.78438 9.13382 5.55843 8.90706 5.30273 8.65137L2.57617 5.92383L2.15137 5.5L3 4.65137L3.42383 5.07617L6.15137 7.80273C6.42595 8.07732 6.59876 8.24849 6.74023 8.3623C6.87291 8.46904 6.92272 8.47813 6.9375 8.48047C6.97895 8.48703 7.02105 8.48703 7.0625 8.48047C7.07728 8.47813 7.12709 8.46904 7.25977 8.3623C7.40124 8.24849 7.57405 8.07732 7.84863 7.80273L10.5762 5.07617L11 4.65137L11.8486 5.5Z'
+    const CHEVRON_RIGHT_PATH = 'M5.5 2.15137L5.92383 2.57617L8.65137 5.30273C8.90706 5.55843 9.13382 5.78438 9.29785 5.98828C9.46883 6.20088 9.61756 6.44405 9.66602 6.75C9.69222 6.91565 9.69222 7.08435 9.66602 7.25C9.61756 7.55595 9.46883 7.79912 9.29785 8.01172C9.13382 8.21561 8.90706 8.44157 8.65137 8.69727L5.92383 11.4238L5.5 11.8486L4.65137 11L5.07617 10.5762L7.80273 7.84863C8.07732 7.57405 8.24849 7.40124 8.3623 7.25977C8.46904 7.12709 8.47813 7.07728 8.48047 7.0625C8.48703 7.02105 8.48703 6.97895 8.48047 6.9375C8.47813 6.92272 8.46904 6.87291 8.3623 6.74023C8.24848 6.59876 8.07732 6.42595 7.80273 6.15137L5.07617 3.42383L4.65137 3L5.5 2.15137Z'
     const CHECK_PATH = 'M15.0498 3.92579L8.49512 12.3818C8.25774 12.6881 8.04517 12.9645 7.84668 13.1689C7.63957 13.3823 7.38732 13.5841 7.04492 13.6719C6.86373 13.7183 6.6757 13.7346 6.48926 13.7197C6.13666 13.6915 5.8528 13.5355 5.6123 13.3604C5.38201 13.1926 5.12573 12.9567 4.83984 12.6953L1.03125 9.21289L1.96875 8.1875L5.77734 11.6699C6.08684 11.9529 6.27773 12.1249 6.43066 12.2363C6.50183 12.2882 6.54699 12.3135 6.57324 12.3252C6.58525 12.3305 6.59269 12.3322 6.5957 12.333C6.59802 12.3336 6.59961 12.334 6.59961 12.334C6.63317 12.3367 6.66758 12.3335 6.7002 12.3252C6.7002 12.3252 6.70211 12.3251 6.7041 12.3242C6.70698 12.3229 6.71348 12.319 6.72461 12.3115C6.74849 12.2956 6.78843 12.2642 6.84961 12.2012C6.98138 12.0654 7.13957 11.8628 7.39648 11.5313L13.9502 3.07422L15.0498 3.92579Z'
+    const SEARCH_PATH = 'M11.894845 6.647401C11.894845 3.725463 9.534486 1.356779 6.623219 1.35657C3.711786 1.35657 1.351635 3.725338 1.351635 6.647401C1.351843 9.569296 3.711911 11.938273 6.623219 11.938273C9.534361 11.938064 11.894637 9.569171 11.894845 6.647401ZM13.245462 6.647401C13.245254 10.317935 10.280401 13.293613 6.623219 13.293821C2.965871 13.293821 0.000204 10.31806 0 6.647401C0 2.976574 2.965746 0 6.623219 0C10.280526 0.000205 13.245462 2.9767 13.245462 6.647401Z'
+
     const POLL_INTERVAL_MS = 1500
     /** Marks a Trajectory turn whose messages an edit has replaced. */
     const REPLACED_ATTR = 'data-dme-replaced'
@@ -71,7 +75,10 @@ tr[${REPLACED_ATTR}="true"][data-turn-start="true"] > td:last-child::after {
       emptyHint: 'Gõ nội dung (hoặc giữ ảnh) để gửi',
       unchanged: 'Nội dung chưa đổi — sửa chữ rồi gửi lại',
       model: 'Model',
-      modelKeep: 'Giữ model hiện tại'
+      effort: 'Effort',
+      modelKeep: 'Model hiện tại',
+      modelSearch: 'Tìm model…',
+      modelNoEffort: 'Model này không có mức effort'
     }
 
     /** The Chat transcript's row identity, as `conversationContextKey` composes it. */
@@ -168,29 +175,17 @@ tr[${REPLACED_ATTR}="true"][data-turn-start="true"] > td:last-child::after {
      * `@deepseek-ai/dsh-client-ui-primitives`' `IconChevronDownOutline14` and
      * `IconCheckOutline16` — the composer's chip uses those exact glyphs.
      */
-    function chevronMark() {
+    /** One of the primitives' own marks, built from its exact path data. */
+    function iconMark(viewBox, size, path) {
       const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
-      svg.setAttribute('viewBox', '0 0 14 14')
-      svg.setAttribute('width', '14')
-      svg.setAttribute('height', '14')
+      svg.setAttribute('viewBox', viewBox)
+      svg.setAttribute('width', String(size))
+      svg.setAttribute('height', String(size))
       svg.setAttribute('aria-hidden', 'true')
-      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
-      path.setAttribute('d', CHEVRON_PATH)
-      path.setAttribute('fill', 'currentColor')
-      svg.append(path)
-      return svg
-    }
-
-    function checkMark() {
-      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
-      svg.setAttribute('viewBox', '0 0 16 16')
-      svg.setAttribute('width', '16')
-      svg.setAttribute('height', '16')
-      svg.setAttribute('aria-hidden', 'true')
-      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
-      path.setAttribute('d', CHECK_PATH)
-      path.setAttribute('fill', 'currentColor')
-      svg.append(path)
+      const node = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+      node.setAttribute('d', path)
+      node.setAttribute('fill', 'currentColor')
+      svg.append(node)
       return svg
     }
 
@@ -200,13 +195,14 @@ tr[${REPLACED_ATTR}="true"][data-turn-start="true"] > td:last-child::after {
     }
 
     /**
-     * The frame's model picker: the chip and the menu built to the measurements
-     * the app's own `ModelSelect` module uses — same tokens, same radii, same
-     * typography, same check mark — so an edit frame reads as part of the app
-     * rather than a control bolted onto it.
+     * The frame's model picker, built to the app's own `ModelSelect` module: the
+     * same 28px pill trigger, the same two-level menu (a `Model` cell and an
+     * `Effort` cell opening their own panes), the same search row, the same
+     * 38px option rows and check mark — and the same placement: above the chip,
+     * an 8px gap, the menu's right edge on the chip's right edge.
      *
-     * The chip always names the model that would answer: the chosen one once the
-     * reader picks, the session's current one until then.
+     * The chip always names the model that would answer, with its effort, exactly
+     * as the composer's chip does.
      *
      * @returns {{row: HTMLElement, value: () => string, label: () => string}}
      */
@@ -214,77 +210,112 @@ tr[${REPLACED_ATTR}="true"][data-turn-start="true"] > td:last-child::after {
       const row = document.createElement('div')
       row.className = 'dme-model-row'
 
-      const caption = document.createElement('span')
-      caption.className = 'dme-model-label'
-      caption.textContent = LABELS.model
-
       const trigger = document.createElement('button')
       trigger.type = 'button'
       trigger.className = 'dme-model-trigger'
       trigger.dataset.dmeAction = 'model'
       trigger.setAttribute('aria-haspopup', 'menu')
       trigger.setAttribute('aria-expanded', 'false')
-      const name = document.createElement('span')
-      name.className = 'dme-model-name'
-      const effort = document.createElement('span')
-      effort.className = 'dme-model-effort'
-      const chevron = chevronMark()
+      const nameNode = document.createElement('span')
+      nameNode.className = 'dme-model-name'
+      const effortNode = document.createElement('span')
+      effortNode.className = 'dme-model-effort'
+      const chevron = iconMark('0 0 14 14', 14, CHEVRON_DOWN_PATH)
       chevron.setAttribute('class', 'dme-model-chevron')
-      trigger.append(name, effort, chevron)
+      trigger.append(nameNode, effortNode, chevron)
 
       const menu = document.createElement('div')
       menu.className = 'dme-model-menu'
       menu.setAttribute('role', 'menu')
       menu.hidden = true
-      const groups = document.createElement('div')
-      groups.className = 'dme-model-groups'
-      menu.append(groups)
-      row.append(caption, trigger, menu)
+      const body = document.createElement('div')
+      body.className = 'dme-model-body'
+      menu.append(body)
+      row.append(trigger, menu)
 
-      /** @type {Map<string, {name: string, efforts: Map<string, string>}>} */
+      /** @type {Map<string, {name: string, efforts: Array<{id: string, name: string}>, defaultEffort: string | null}>} */
       const entries = new Map()
-      let chosen = null
+      const baseline = current === null || current === undefined
+        ? null
+        : { provider: current.provider, model: current.model, ...(typeof current.effort === 'string' ? { effort: current.effort } : {}) }
+      let selection = baseline === null ? null : { ...baseline }
+      let pane = 'root'
       let open = false
 
-      const effective = () => chosen ?? current ?? null
-
-      const effortLabelOf = (selection, entry) => {
-        const id = selection?.effort
-        if (typeof id !== 'string' || id === '') return ''
-        return entry?.efforts?.get(id) ?? id
+      const entryOf = (value) => (value === null ? undefined : entries.get(modelKey(value.provider, value.model)))
+      const modelLabelOf = (value) => (value === null ? LABELS.modelKeep : entryOf(value)?.name ?? value.model)
+      const effortsOf = (value) => (value === null ? [] : entryOf(value)?.efforts ?? [])
+      const effortLabelOf = (value) => {
+        if (value === null || typeof value.effort !== 'string' || value.effort === '') return ''
+        const level = effortsOf(value).find((item) => item.id === value.effort)
+        return level?.name ?? value.effort
       }
 
-      /** Repaint the chip and the check marks from the current choice. */
-      const paint = () => {
-        const selection = effective()
-        const entry = selection === null ? undefined : entries.get(modelKey(selection.provider, selection.model))
-        name.textContent = selection === null ? LABELS.modelKeep : entry?.name ?? selection.model
-        name.title = name.textContent
-        const effortLabel = selection === null ? '' : effortLabelOf(selection, entry)
-        effort.textContent = effortLabel === '' ? '' : ` ${effortLabel}`
-        const wanted = selection === null ? '' : modelKey(selection.provider, selection.model)
-        for (const option of groups.querySelectorAll('.dme-model-option')) {
-          const isChosen = (option.dataset.modelKey ?? '') === wanted
-          option.setAttribute('aria-checked', isChosen ? 'true' : 'false')
-          const slot = option.querySelector('.dme-model-check')
-          slot.textContent = ''
-          if (isChosen) slot.append(checkMark())
-        }
+      /** The chip says what would answer: model first, effort beside it. */
+      const paintTrigger = () => {
+        const label = modelLabelOf(selection)
+        nameNode.textContent = label
+        nameNode.title = label
+        const effort = effortLabelOf(selection)
+        effortNode.textContent = effort === '' ? '' : ` ${effort}`
       }
 
-      /** Place the menu above the chip when there is room, below when there is not. */
+      /** Does the reader's current choice differ from what the session already uses? */
+      const changed = () => {
+        if (baseline === null) return selection !== null
+        if (selection === null) return baseline !== null
+        return selection.provider !== baseline.provider
+          || selection.model !== baseline.model
+          || (selection.effort ?? null) !== (baseline.effort ?? null)
+      }
+
       const place = () => {
         const rect = trigger.getBoundingClientRect()
         const box = menu.getBoundingClientRect()
         const margin = 12
+        const gap = 8
         const roomAbove = rect.top - margin
-        const above = roomAbove >= Math.min(box.height, 260)
+        const above = roomAbove >= Math.min(box.height, 300)
         const top = above
-          ? Math.max(margin, rect.top - Math.min(box.height, roomAbove) - 4)
-          : Math.min(rect.bottom + 4, window.innerHeight - box.height - margin)
-        const left = Math.max(margin, Math.min(rect.left, window.innerWidth - box.width - margin))
+          ? Math.max(margin, rect.top - box.height - gap)
+          : Math.min(rect.bottom + gap, window.innerHeight - box.height - margin)
+        // The app hangs its menu off the trigger's right edge (`right: 0`); keep
+        // that edge when the window allows it, and slide in when it does not.
+        const right = rect.right
+        const left = Math.max(margin, Math.min(right - box.width, window.innerWidth - box.width - margin))
         menu.style.top = `${Math.round(top)}px`
         menu.style.left = `${Math.round(left)}px`
+      }
+
+      const focusable = () => [...body.querySelectorAll('.dme-model-cell, .dme-model-option, .dme-model-search-input')]
+
+      const focusFirst = (backwards = false) => {
+        const list = focusable()
+        const target = backwards ? list[list.length - 1] : list[0]
+        target?.focus()
+      }
+
+      const onKey = (event) => {
+        if (event.key === 'Escape') {
+          event.stopPropagation()
+          if (pane !== 'root') {
+            pane = 'root'
+            renderBody()
+            focusFirst()
+            return
+          }
+          close()
+          trigger.focus()
+          return
+        }
+        if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+        event.preventDefault()
+        const list = focusable().filter((node) => node.hidden !== true)
+        if (list.length === 0) return
+        const at = list.indexOf(document.activeElement)
+        const step = event.key === 'ArrowDown' ? 1 : -1
+        const from = at < 0 ? (step === 1 ? -1 : 0) : at
+        list[(((from + step) % list.length) + list.length) % list.length].focus()
       }
 
       const onOutside = (event) => {
@@ -292,21 +323,154 @@ tr[${REPLACED_ATTR}="true"][data-turn-start="true"] > td:last-child::after {
         close()
       }
 
-      const onKey = (event) => {
-        if (event.key === 'Escape') {
-          event.stopPropagation()
-          close()
-          trigger.focus()
+      /**
+       * The root pane: one cell per level of the choice, exactly as the app's menu
+       * opens — `Model` with the model in use, `Effort` when that model has any.
+       */
+      const cell = (kind, label, value, onOpen) => {
+        const button = document.createElement('button')
+        button.type = 'button'
+        button.className = 'dme-model-cell'
+        button.setAttribute('role', 'menuitem')
+        button.dataset.dmeCell = kind
+        const labelNode = document.createElement('span')
+        labelNode.className = 'dme-model-cell-label'
+        labelNode.textContent = label
+        const valueNode = document.createElement('span')
+        valueNode.className = 'dme-model-cell-value'
+        valueNode.textContent = value
+        const mark = iconMark('0 0 14 14', 14, CHEVRON_RIGHT_PATH)
+        mark.setAttribute('class', 'dme-model-cell-chevron')
+        button.append(labelNode, valueNode, mark)
+        button.addEventListener('click', onOpen)
+        return button
+      }
+
+      /** The search row the app puts above its model list. */
+      const searchRow = () => {
+        const holder = document.createElement('label')
+        holder.className = 'dme-model-search'
+        const icon = iconMark('0 0 16 16', 16, SEARCH_PATH)
+        icon.setAttribute('class', 'dme-model-search-icon')
+        const input = document.createElement('input')
+        input.type = 'search'
+        input.className = 'dme-model-search-input'
+        input.placeholder = LABELS.modelSearch
+        input.setAttribute('aria-label', LABELS.modelSearch)
+        input.autocomplete = 'off'
+        input.spellcheck = false
+        input.addEventListener('input', () => filter(input.value))
+        holder.append(icon, input)
+        window.setTimeout(() => input.focus(), 0)
+        return holder
+      }
+
+      /** Filter the rows already on screen: rebuilding them would drop the caret. */
+      const filter = (query) => {
+        const wanted = query.trim().toLowerCase()
+        for (const section of body.querySelectorAll('.dme-model-group')) {
+          let shown = 0
+          for (const option of section.querySelectorAll('.dme-model-option')) {
+            const hit = wanted === '' || (option.dataset.modelName ?? '').toLowerCase().includes(wanted)
+            option.hidden = hit !== true
+            if (hit) shown += 1
+          }
+          section.hidden = shown === 0
+        }
+      }
+
+      /** One option row: the model's name, and the check when it is the choice. */
+      const optionRow = (id, label, checked, onPick) => {
+        const button = document.createElement('button')
+        button.type = 'button'
+        button.className = 'dme-model-option'
+        button.setAttribute('role', 'menuitemradio')
+        button.setAttribute('aria-checked', checked ? 'true' : 'false')
+        button.dataset.modelKey = id
+        button.dataset.modelName = label
+        button.title = label
+        const copy = document.createElement('span')
+        copy.className = 'dme-model-copy'
+        const text = document.createElement('span')
+        text.className = 'dme-model-option-name'
+        text.textContent = label
+        copy.append(text)
+        const slot = document.createElement('span')
+        slot.className = 'dme-model-check'
+        if (checked) slot.append(iconMark('0 0 16 16', 16, CHECK_PATH))
+        button.append(copy, slot)
+        button.addEventListener('click', onPick)
+        return button
+      }
+
+      const modelPane = () => {
+        const holder = document.createElement('div')
+        holder.className = 'dme-model-pane'
+        holder.append(searchRow())
+        const groups = document.createElement('div')
+        groups.className = 'dme-model-groups'
+        for (const group of catalogGroups) {
+          if (group.models.length === 0) continue
+          const section = document.createElement('section')
+          section.className = 'dme-model-group'
+          section.setAttribute('role', 'group')
+          const title = document.createElement('div')
+          title.className = 'dme-model-group-title'
+          title.textContent = group.name
+          section.append(title)
+          for (const model of group.models) {
+            const key = modelKey(group.id, model.id)
+            const chosen = selection !== null && selection.provider === group.id && selection.model === model.id
+            section.append(optionRow(key, model.name, chosen, () => {
+              // A model keeps the effort in use when it knows that effort, and
+              // otherwise falls back to its own default — never to a guess.
+              const keeps = selection !== null && model.efforts.some((item) => item.id === selection.effort)
+              const effort = keeps ? selection.effort : model.defaultEffort
+              selection = { provider: group.id, model: model.id, ...(typeof effort === 'string' && effort !== '' ? { effort } : {}) }
+              paintTrigger()
+              close()
+              trigger.focus()
+            }))
+          }
+          groups.append(section)
+        }
+        holder.append(groups)
+        return holder
+      }
+
+      const effortPane = () => {
+        const groups = document.createElement('div')
+        groups.className = 'dme-model-groups'
+        const levels = effortsOf(selection)
+        if (levels.length === 0) {
+          const empty = document.createElement('div')
+          empty.className = 'dme-model-status'
+          empty.textContent = LABELS.modelNoEffort
+          groups.append(empty)
+          return groups
+        }
+        for (const level of levels) {
+          const chosen = selection !== null && (selection.effort ?? '') === level.id
+          groups.append(optionRow(`effort\u0000${level.id}`, level.name, chosen, () => {
+            selection = { ...(selection ?? {}), effort: level.id }
+            paintTrigger()
+            close()
+            trigger.focus()
+          }))
+        }
+        return groups
+      }
+
+      function renderBody() {
+        body.textContent = ''
+        if (pane === 'root') {
+          body.append(cell('model', LABELS.model, modelLabelOf(selection), () => { pane = 'model'; renderBody(); focusFirst() }))
+          if (effortsOf(selection).length > 0) {
+            body.append(cell('effort', LABELS.effort, effortLabelOf(selection), () => { pane = 'effort'; renderBody(); focusFirst() }))
+          }
           return
         }
-        if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
-        event.preventDefault()
-        const options = [...groups.querySelectorAll('.dme-model-option')]
-        if (options.length === 0) return
-        const at = options.indexOf(document.activeElement)
-        const step = event.key === 'ArrowDown' ? 1 : -1
-        const from = at < 0 ? (step === 1 ? -1 : 0) : at
-        options[(((from + step) % options.length) + options.length) % options.length].focus()
+        body.append(pane === 'model' ? modelPane() : effortPane())
       }
 
       function close() {
@@ -323,6 +487,8 @@ tr[${REPLACED_ATTR}="true"][data-turn-start="true"] > td:last-child::after {
       const show = () => {
         if (open === true) return
         open = true
+        pane = 'root'
+        renderBody()
         menu.hidden = false
         trigger.setAttribute('aria-expanded', 'true')
         place()
@@ -340,89 +506,52 @@ tr[${REPLACED_ATTR}="true"][data-turn-start="true"] > td:last-child::after {
         else show()
       })
 
-      const choose = (selection) => {
-        chosen = selection
-        paint()
-        close()
-        trigger.focus()
-      }
-
-      /** Build the option rows from the host's catalog, once per frame. */
+      /** The catalog, flattened into the groups the menu renders. */
+      let catalogGroups = []
       const fill = (catalog) => {
-        groups.textContent = ''
+        catalogGroups = []
         entries.clear()
-        const keep = document.createElement('button')
-        keep.type = 'button'
-        keep.className = 'dme-model-option'
-        keep.setAttribute('role', 'menuitemradio')
-        keep.dataset.modelKey = ''
-        const keepCopy = document.createElement('span')
-        keepCopy.className = 'dme-model-copy'
-        const keepName = document.createElement('span')
-        keepName.className = 'dme-model-option-name'
-        keepName.textContent = current === null || current === undefined
-          ? LABELS.modelKeep
-          : `${LABELS.modelKeep} (${current.model})`
-        keepCopy.append(keepName)
-        const keepCheck = document.createElement('span')
-        keepCheck.className = 'dme-model-check'
-        keep.append(keepCopy, keepCheck)
-        keep.addEventListener('click', () => { choose(null) })
-        groups.append(keep)
-
         for (const group of Array.isArray(catalog?.groups) ? catalog.groups : []) {
-          const models = Array.isArray(group?.models) ? group.models : []
-          if (models.length === 0) continue
-          const section = document.createElement('section')
-          section.className = 'dme-model-group'
-          section.setAttribute('role', 'group')
-          const title = document.createElement('div')
-          title.className = 'dme-model-group-title'
-          title.textContent = typeof group.name === 'string' && group.name !== '' ? group.name : String(group.id ?? '')
-          section.append(title)
-          for (const model of models) {
-            const efforts = new Map()
+          const models = []
+          for (const model of Array.isArray(group?.models) ? group.models : []) {
+            const efforts = []
             for (const item of Array.isArray(model?.reasoning?.efforts) ? model.reasoning.efforts : []) {
-              if (typeof item?.id === 'string') efforts.set(item.id, typeof item.name === 'string' ? item.name : item.id)
+              if (typeof item?.id === 'string') efforts.push({ id: item.id, name: typeof item.name === 'string' ? item.name : item.id })
             }
             const entry = {
               name: typeof model.name === 'string' && model.name !== '' ? model.name : String(model.id),
-              efforts
+              efforts,
+              defaultEffort: typeof model?.reasoning?.defaultEffort === 'string' ? model.reasoning.defaultEffort : null
             }
             entries.set(modelKey(group.id, model.id), entry)
-            const option = document.createElement('button')
-            option.type = 'button'
-            option.className = 'dme-model-option'
-            option.setAttribute('role', 'menuitemradio')
-            option.dataset.modelKey = modelKey(group.id, model.id)
-            option.title = entry.name
-            const copy = document.createElement('span')
-            copy.className = 'dme-model-copy'
-            const optionName = document.createElement('span')
-            optionName.className = 'dme-model-option-name'
-            optionName.textContent = entry.name
-            copy.append(optionName)
-            const slot = document.createElement('span')
-            slot.className = 'dme-model-check'
-            option.append(copy, slot)
-            option.addEventListener('click', () => { choose({ provider: group.id, model: model.id }) })
-            section.append(option)
+            models.push({ id: model.id, name: entry.name, efforts, defaultEffort: entry.defaultEffort })
           }
-          groups.append(section)
+          catalogGroups.push({
+            id: group.id,
+            name: typeof group.name === 'string' && group.name !== '' ? group.name : String(group.id ?? ''),
+            models
+          })
         }
-        paint()
+        paintTrigger()
       }
 
       void loadModelCatalog(ctx).then(fill).catch((error) => {
         trigger.disabled = true
         trigger.title = error instanceof Error ? error.message : String(error)
       })
-      paint()
+      paintTrigger()
 
       return {
         row,
-        value: () => (chosen === null ? '' : modelKey(chosen.provider, chosen.model)),
-        label: () => name.textContent
+        pane: (kind) => {
+          if (kind !== 'root' && kind !== 'model' && kind !== 'effort') return null
+          if (open !== true) show()
+          pane = kind
+          renderBody()
+          return focusable().map((node) => (node.textContent ?? '').trim())
+        },
+        value: () => (changed() !== true || selection === null ? '' : modelKey(selection.provider, selection.model) + (selection.effort === undefined ? '' : `\u0000${selection.effort}`)),
+        label: () => trigger.textContent
       }
     }
 
@@ -434,11 +563,16 @@ tr[${REPLACED_ATTR}="true"][data-turn-start="true"] > td:last-child::after {
      */
     async function applyModelChoice(ctx, sessionId, value) {
       if (typeof value !== 'string' || value === '') return null
-      const [provider, model] = value.split('\u0000')
+      const [provider, model, effort] = value.split('\u0000')
       if (provider === undefined || model === undefined || provider === '' || model === '') return null
       const call = ctx.remote?.session?.selectModel
       if (typeof call !== 'function') throw new Error('phiên này không đổi được model')
-      const answer = await call({ sessionId, provider, model })
+      const answer = await call({
+        sessionId,
+        provider,
+        model,
+        ...(effort === undefined || effort === '' ? {} : { reasoningEffort: effort })
+      })
       if (answer?.ok === false) throw new Error(`${answer.error?.code ?? 'error'}: ${answer.error?.message ?? 'đổi model thất bại'}`)
       return { provider, model }
     }
@@ -1165,13 +1299,10 @@ tr[${REPLACED_ATTR}="true"][data-turn-start="true"] > td:last-child::after {
   color: var(--dsw-alias-state-error-primary, #ff6b6b);
 }
 #${EDITOR_ID} .dme-status:empty { display: none; }
-#${EDITOR_ID} .dme-model-row { display: flex; align-items: center; gap: 6px; margin-top: 4px; min-width: 0; }
-#${EDITOR_ID} .dme-model-label {
-  flex: none; font-size: var(--dsh-content-font-size-secondary, 12px); line-height: 16px;
-  color: var(--dsw-alias-label-caption, #77787f);
-}
-/* The chip and the menu follow the app's own ModelSelect measurements: a 28px
-   pill trigger, a 20px-radius menu on the menu token, 38px option rows. */
+#${EDITOR_ID} .dme-model-row { display: flex; align-items: center; justify-content: flex-end; min-width: 0; }
+/* The chip and the menu follow the app's own ModelSelect: a 28px pill trigger,
+   a 20px-radius menu on the menu token, 40px cells, 38px option rows, and the
+   app's own search row above the model list. */
 #${EDITOR_ID} .dme-model-trigger {
   display: flex; align-items: center; gap: 4px; min-width: 0;
   max-width: min(360px, 45vw); height: 28px; padding: 0 4px 0 8px; border: none;
@@ -1194,6 +1325,35 @@ tr[${REPLACED_ATTR}="true"][data-turn-start="true"] > td:last-child::after {
   box-shadow: var(--dsw-elevation-prominent); color: var(--dsw-alias-label-primary);
 }
 #${EDITOR_ID} .dme-model-menu[hidden] { display: none; }
+#${EDITOR_ID} .dme-model-body { display: flex; flex-direction: column; min-height: 0; }
+#${EDITOR_ID} .dme-model-cell {
+  box-sizing: border-box; display: flex; align-items: center; gap: 8px;
+  width: auto; min-width: 100%; height: 40px; padding: 0 10px; border: none;
+  border-radius: 10px; background: none; color: var(--dsw-alias-label-primary);
+  text-align: left; cursor: pointer; outline: none;
+  font: 400 14px/22px Inter, var(--dsw-font-family), sans-serif;
+}
+#${EDITOR_ID} .dme-model-cell:hover, #${EDITOR_ID} .dme-model-cell:focus-visible { background: var(--dsw-alias-interactive-bg-hover); }
+#${EDITOR_ID} .dme-model-cell-label { flex: none; white-space: nowrap; }
+#${EDITOR_ID} .dme-model-cell-value {
+  flex: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  text-align: right; color: var(--dsw-alias-label-tertiary);
+}
+#${EDITOR_ID} .dme-model-cell-chevron { flex: none; color: var(--dsw-alias-label-tertiary); }
+#${EDITOR_ID} .dme-model-search {
+  box-sizing: border-box; display: flex; align-items: center; gap: 7px; flex: none;
+  height: 36px; margin: 2px 4px 4px; padding: 0 9px;
+  border: 1px solid transparent; border-radius: 9px;
+  background: var(--dsw-alias-bg-module-platform); color: var(--dsw-alias-label-tertiary);
+}
+#${EDITOR_ID} .dme-model-search:focus-within { border-color: var(--dsw-alias-border-l2); background: var(--dsw-specific-menu); }
+#${EDITOR_ID} .dme-model-search-icon { flex: none; }
+#${EDITOR_ID} .dme-model-search-input {
+  width: 100%; min-width: 0; padding: 0; border: none; outline: none; background: none;
+  color: var(--dsw-alias-label-primary); font: inherit; font-size: 13px; line-height: 20px;
+}
+#${EDITOR_ID} .dme-model-search-input::placeholder { color: var(--dsw-alias-label-caption); }
+#${EDITOR_ID} .dme-model-pane { display: flex; flex-direction: column; min-height: 0; }
 #${EDITOR_ID} .dme-model-groups { min-height: 0; overflow-y: auto; }
 #${EDITOR_ID} .dme-model-group + .dme-model-group { margin-top: 4px; }
 #${EDITOR_ID} .dme-model-group-title {
@@ -1201,12 +1361,14 @@ tr[${REPLACED_ATTR}="true"][data-turn-start="true"] > td:last-child::after {
   background: var(--dsw-specific-menu); color: var(--dsw-alias-label-tertiary);
   font: 500 12px/18px Inter, var(--dsw-font-family), sans-serif;
 }
+#${EDITOR_ID} .dme-model-status { padding: 10px; color: var(--dsw-alias-label-tertiary); font-size: 13px; line-height: 20px; }
 #${EDITOR_ID} .dme-model-option {
   box-sizing: border-box; display: flex; align-items: center; gap: 8px;
   width: auto; min-width: 100%; min-height: 38px; padding: 6px 8px;
   border: none; border-radius: 10px; background: none; color: inherit;
   text-align: left; cursor: pointer; outline: none;
 }
+#${EDITOR_ID} .dme-model-option[hidden] { display: none; }
 #${EDITOR_ID} .dme-model-option:hover:not(:disabled), #${EDITOR_ID} .dme-model-option:focus-visible {
   background: var(--dsw-alias-interactive-bg-hover);
 }
@@ -1362,6 +1524,8 @@ tr[${REPLACED_ATTR}="true"][data-turn-start="true"] > td:last-child::after {
           option.click()
           return true
         },
+        modelCells: () => [...document.querySelectorAll('#dsh-message-edit-editor .dme-model-cell')]
+          .map((node) => ({ kind: node.dataset.dmeCell ?? '', label: node.textContent ?? '' })),
         sendEditor: () => {
           const host = document.getElementById(EDITOR_ID)
           const button = host?.querySelector('[data-dme-action="send"]')
