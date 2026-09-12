@@ -1112,9 +1112,16 @@ async function handleLocate(ctx, request) {
 
   const joined = resolveRequestPath(token, cwd === '' ? null : cwd)
   const stats = await statOrNull(joined)
-  return stats === null
-    ? ok({ kind: 'missing', requested: token, base: cwd === '' ? null : cwd, path: joined, source: 'workspace-root' })
-    : ok({ kind: 'open', requested: token, base: cwd === '' ? null : cwd, ...stats, source: 'workspace-root' })
+  if (stats !== null) return ok({ kind: 'open', requested: token, base: cwd === '' ? null : cwd, ...stats, source: 'workspace-root' })
+  // A bare name carries no directory part, so nothing on disk is evidence that
+  // its author meant a file: `runtime.visible` is a property, `README.md` may be
+  // a footnote. Joining it onto the root and reporting the join as a refusal is
+  // how a click that meant nothing turns into "that path is not on disk".
+  // Nothing matched => not a path at all, and the reader is left alone.
+  if (/[/\\]/.test(token) !== true) {
+    return ok({ kind: 'not-a-path', requested: token, base: cwd === '' ? null : cwd, source: 'bare-name' })
+  }
+  return ok({ kind: 'missing', requested: token, base: cwd === '' ? null : cwd, path: joined, source: 'workspace-root' })
 }
 
 /** @param {Request} request */

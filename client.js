@@ -2713,6 +2713,9 @@ body[data-ds-dark-theme] .dfp-root {
       } catch {
         /* no record available: fall through to the workspace root */
       }
+      // Same rule as the resolver: a bare name that matched nothing is not a
+      // path, and the workspace root is not going to turn it into one.
+      if (/[/\\]/.test(requested) !== true) return null;
       return typeof cwd === 'string' && cwd.length > 0 ? `${cwd.replace(/[/\\]+$/, '')}/${requested}` : requested;
     }
 
@@ -2725,14 +2728,19 @@ body[data-ds-dark-theme] .dfp-root {
       const requested = lexicalNormalize(String(rawPath ?? '').trim());
       if (requested.length === 0) return;
 
-      // The panel is shown FIRST. A click must always put something on screen:
-      // silence is the one answer a reader cannot tell apart from a broken app.
-      runtime.visible = true;
-      if (runtime.dockWidth > defaultDockWidth()) runtime.dockWidth = defaultDockWidth();
-      applyPanelHost(ctx, sessionId);
-      // The workspace root is known whether or not the path turns out to exist:
-      // the refused notice and the tree still need somewhere to point at.
-      mutate(sessionId, (state) => { state.cwd = cwd });
+      /**
+       * Put the panel on screen for an answer worth showing. It is called only
+       * after the token has been judged: a click that means nothing gets nothing,
+       * not an empty panel with a refusal in it.
+       */
+      const revealPanel = () => {
+        runtime.visible = true;
+        if (runtime.dockWidth > defaultDockWidth()) runtime.dockWidth = defaultDockWidth();
+        applyPanelHost(ctx, sessionId);
+        // The workspace root is known whether or not the path turns out to exist:
+        // the refused notice and the tree still need somewhere to point at.
+        mutate(sessionId, (state) => { state.cwd = cwd });
+      };
 
       // One resolver owns every rule about what this token means. A host that
       // has not got the route yet is answered locally instead, never silently.
@@ -2740,10 +2748,13 @@ body[data-ds-dark-theme] .dfp-root {
       if (located === null) {
         const candidate = await locateWithoutResolver(sessionId, requested, cwd);
         if (candidate === null) return;
+        revealPanel();
         await openFile(sessionId, candidate, { cwd });
         return;
       }
+      // Not a path at all: no panel, no notice, nothing taken from the reader.
       if (located.kind === 'not-a-path') return;
+      revealPanel();
       const resolvedPath = typeof located.path === 'string' && located.path.length > 0 ? nativePath(located.path) : requested;
       if (located.kind === 'choose') {
         const options = (Array.isArray(located.options) ? located.options : []).map((entry) => nativePath(entry));
@@ -2761,13 +2772,6 @@ body[data-ds-dark-theme] .dfp-root {
         return;
       }
       const absolute = resolvedPath;
-
-      runtime.visible = true;
-      if (runtime.dockWidth > defaultDockWidth()) runtime.dockWidth = defaultDockWidth();
-      applyPanelHost(ctx, sessionId);
-      // The workspace root is known whether or not the path turns out to exist:
-      // the refused notice and the tree still need somewhere to point at.
-      mutate(sessionId, (state) => { state.cwd = cwd });
 
       // Nothing opens unless it is on disk right now. A directory link opens the
       // tree at that directory; anything else that is not there is refused with
