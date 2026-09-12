@@ -33,6 +33,26 @@ window.__ModuleLoader__.load({
      */
     const USER_KIND_PREFIXES = ['input-message', 'dsh-message-edit', 'steering']
     const POLL_INTERVAL_MS = 1500
+    /** Marks a Trajectory turn whose messages an edit has replaced. */
+    const REPLACED_ATTR = 'data-dme-replaced'
+    const REPLACED_TITLE = 'Turn này đã bị thay thế bằng một bản sửa — nó không còn nằm trong context.'
+    const REPLACED_CSS = `
+/* A turn an edit replaced, in the Trajectory view: the log keeps it, so the
+   reader gets told it is history rather than context. The dimming sits on the
+   row's own text nodes (not the cell) so the label stays readable. */
+tr[${REPLACED_ATTR}="true"] > td:last-child > * { opacity: .42; text-decoration: line-through; text-decoration-thickness: 1px; }
+tr[${REPLACED_ATTR}="true"][data-turn-start="true"] > td:first-child { color: var(--dsw-alias-text-3, currentColor); }
+tr[${REPLACED_ATTR}="true"][data-turn-start="true"] > td:last-child { padding-right: 104px; }
+tr[${REPLACED_ATTR}="true"][data-turn-start="true"] > td:last-child::after {
+  content: "đã thay thế";
+  position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+  padding: 1px 7px; border-radius: 999px;
+  font-size: 10px; line-height: 15px; white-space: nowrap;
+  letter-spacing: .01em; opacity: 1;
+  color: var(--dsw-alias-state-warning-primary, #d9a13b);
+  border: 1px solid color-mix(in srgb, var(--dsw-alias-state-warning-primary, #d9a13b) 45%, transparent);
+  background: color-mix(in srgb, var(--dsw-alias-state-warning-primary, #d9a13b) 16%, transparent);
+}`
     const LABELS = {
       edit: 'Sửa tin nhắn',
       cancel: 'Hủy bỏ',
@@ -146,6 +166,77 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * Paint the Trajectory view's rows that belong to a turn an edit replaced.
+     *
+     * The Trajectory renders the durable log itself, so a replaced turn keeps its
+     * rows there — which is what an audit trail is for, and exactly why a reader
+     * cannot tell it apart from a live one. Those rows are dimmed, struck through
+     * and labelled at the turn they open, so nobody has to wonder whether the old
+     * text is still in the conversation. It is not: only the surface is sent.
+     */
+    function paintReplacedTurns(state) {
+      if (typeof document === 'undefined') return 0
+      const rows = document.querySelectorAll('tr[data-trajectory-row-key]')
+      if (rows.length === 0) return 0
+      for (const row of rows) {
+        if (row.getAttribute(REPLACED_ATTR) === 'true') row.removeAttribute(REPLACED_ATTR)
+        if (row.getAttribute('title') === REPLACED_TITLE) row.removeAttribute('title')
+      }
+      const starts = new Set()
+      for (const edit of state?.edits ?? []) {
+        const start = Number(edit?.start)
+        if (Number.isSafeInteger(start)) starts.add(start)
+      }
+      if (starts.size === 0) return 0
+      const all = [...rows]
+      let marked = 0
+      for (let index = 0; index < all.length; index += 1) {
+        if (carriesReplacedMessage(all[index], starts) !== true) continue
+        // One turn is one block of rows: it opens at the replaced message's row
+        // and runs until the next turn opens (or the current one closes).
+        let from = index
+        while (from > 0 && all[from].dataset.turnStart !== 'true') from -= 1
+        let to = from
+        while (to + 1 < all.length && all[to + 1].dataset.turnStart !== 'true' && all[to].dataset.turnEnd !== 'true') to += 1
+        for (let at = from; at <= to; at += 1) {
+          all[at].setAttribute(REPLACED_ATTR, 'true')
+          all[at].setAttribute('title', REPLACED_TITLE)
+          marked += 1
+        }
+      }
+      return marked
+    }
+
+    /**
+     * Does one Trajectory row carry the identity of a message an edit replaced?
+     * The row key is the log's own (`user\0seq\0<seq>`), and an edit records the
+     * seq it replaced, so the two meet on the seq — never on a guess.
+     */
+    function carriesReplacedMessage(row, starts) {
+      const raw = row.dataset.trajectoryRowKey
+      if (typeof raw !== 'string' || raw === '') return false
+      let key = raw
+      try {
+        key = decodeURIComponent(raw)
+      } catch {
+        /* not encoded: read it as written */
+      }
+      const parts = key.split('\u0000')
+      if (parts[0] !== 'user' || parts[1] !== 'seq') return false
+      return starts.has(Number(parts[2]))
+    }
+
+    /** One coalesced repaint, so a scrolling Trajectory never paints per row. */
+    let replacedTimer = null
+    function scheduleReplacedPaint() {
+      if (replacedTimer !== null) return
+      replacedTimer = window.setTimeout(() => {
+        replacedTimer = null
+        paintReplacedTurns(stateSnapshot())
+      }, 200)
+    }
+
+    /**
      * Hide exactly the rows the harness's surface fold no longer contains.
      * Rows are addressable by their own `data-chat-flow-key`, and whole turns
      * by `data-chat-turn`; both come straight from the durable log.
@@ -155,8 +246,9 @@ window.__ModuleLoader__.load({
       for (const turn of state?.hiddenTurns ?? []) selectors.push(`[data-chat-flow] > [data-chat-turn="${String(turn)}"]`)
       for (const key of state?.hiddenKeys ?? []) selectors.push(`[data-chat-flow] > [data-chat-flow-key="${String(key).replace(/"/g, '\\"')}"]`)
       const element = hiddenStyleElement()
-      const next = selectors.length === 0 ? '' : `${selectors.join(',')}{display:none !important}`
+      const next = `${selectors.length === 0 ? '' : `${selectors.join(',')}{display:none !important}`}${REPLACED_CSS}`
       if (element.textContent !== next) element.textContent = next
+      paintReplacedTurns(state)
     }
 
     function applyState(state) {
@@ -805,12 +897,25 @@ window.__ModuleLoader__.load({
       window.addEventListener('scroll', onViewportChange, true)
       window.addEventListener('resize', onViewportChange)
 
+      // The Trajectory virtualizes its rows: scrolling can put a replaced turn
+      // back on screen with no state change to trigger a repaint.
+      const replacedObserver = new MutationObserver(() => {
+        if (stateSnapshot()?.edits?.length > 0
+          && document.querySelector('tr[data-trajectory-row-key]') !== null) scheduleReplacedPaint()
+      })
+      replacedObserver.observe(document.body, { childList: true, subtree: true })
+
       ctx.effect(() => () => {
         closeEditor()
         hidePencil()
         document.removeEventListener('pointermove', onPointerMove, true)
         window.removeEventListener('scroll', onViewportChange, true)
         window.removeEventListener('resize', onViewportChange)
+        replacedObserver.disconnect()
+        if (replacedTimer !== null) {
+          clearTimeout(replacedTimer)
+          replacedTimer = null
+        }
         if (pollTimer !== null) clearInterval(pollTimer)
         stateCtx = null
       }, 'dsh-message-edit DOM listeners')
@@ -875,6 +980,9 @@ window.__ModuleLoader__.load({
         },
         hiddenKeys: () => (stateSnapshot()?.hiddenKeys ?? []),
         editableMessages: () => editableMessages(),
+        /** Trajectory rows currently marked as belonging to a replaced turn. */
+        replacedRows: () => document.querySelectorAll(`tr[${REPLACED_ATTR}="true"]`).length,
+        paintReplacedTurns: () => paintReplacedTurns(stateSnapshot()),
         chatKey,
         messageIdOfKey
       }
