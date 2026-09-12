@@ -214,17 +214,54 @@ window.__ModuleLoader__.load({
       }, 450)
     }
 
+    /**
+     * The two anchors a row offers.
+     *
+     * `actions` is the time/copy cluster DSH renders UNDER the bubble, which is
+     * the only reliably free space around a message: the bubble itself is
+     * right-aligned and can be only a few dozen pixels wide, so anchoring to the
+     * row's right edge parks the button on top of the user's own text.
+     */
+    function anchorsOf(row) {
+      const slot = row.firstElementChild
+      const userRow = slot === null ? null : slot.firstElementChild
+      const candidate = userRow === null ? null : userRow.lastElementChild
+      const actions = candidate !== null && candidate.querySelector('button') !== null ? candidate : null
+      const images = row.querySelector('[data-slot="conversation.message.images"]')
+      return { actions, bubble: images === null ? null : images.nextElementSibling }
+    }
+
     function positionPencil() {
       if (hovered === null) return
       const element = pencilElement()
-      const rect = hovered.row.getBoundingClientRect()
-      if (rect.width === 0 && rect.height === 0) {
+      const rowRect = hovered.row.getBoundingClientRect()
+      if (rowRect.width === 0 && rowRect.height === 0) {
         hidePencil()
         return
       }
       const size = 30
-      const top = Math.round(rect.top + Math.min(8, Math.max(0, rect.height / 2 - size / 2)))
-      const left = Math.round(Math.min(rect.right - size - 8, window.innerWidth - size - 8))
+      const gap = 8
+      const { actions, bubble } = anchorsOf(hovered.row)
+      let top = null
+      let left = null
+      if (actions !== null && actions.getBoundingClientRect().width > 0) {
+        const rect = actions.getBoundingClientRect()
+        top = rect.top + (rect.height - size) / 2
+        left = rect.left - size - gap
+      }
+      if (left === null || left < gap) {
+        const rect = bubble === null ? rowRect : bubble.getBoundingClientRect()
+        top = rect.top + (rect.height - size) / 2
+        left = rect.left - size - gap
+      }
+      if (left < gap) {
+        // No gutter on the left at all: fall back to under the actions cluster.
+        const rect = actions === null ? rowRect : actions.getBoundingClientRect()
+        top = rect.bottom + 4
+        left = rect.left
+      }
+      top = Math.round(Math.min(Math.max(gap, top), Math.max(gap, window.innerHeight - size - gap)))
+      left = Math.round(Math.min(Math.max(gap, left), Math.max(gap, window.innerWidth - size - gap)))
       const geometry = `${top}:${left}`
       if (geometry !== placed) {
         placed = geometry
