@@ -1585,14 +1585,38 @@ body[data-ds-dark-theme] .dfp-root {
       const narrow = useNarrow(ref);
       const sessionId = props.sessionId;
       const ctx = props.__ctx;
-      if (sessionStates.get(sessionId) === undefined || runtime.owner !== sessionId) return null;
       const docked = runtime.mode === 'overlay';
+      // A slide-over must never feel stuck: clicking anywhere outside it, or
+      // pressing Escape, puts the panel away.
+      React.useEffect(() => {
+        if (docked !== true) return undefined;
+        const onPointerDown = (event) => {
+          const node = ref.current;
+          if (node === null || node.contains(event.target) === true) return;
+          closePanel(ctx);
+        };
+        const onKeyDown = (event) => {
+          if (event.key === 'Escape') closePanel(ctx);
+        };
+        window.addEventListener('pointerdown', onPointerDown, true);
+        window.addEventListener('keydown', onKeyDown, true);
+        return () => {
+          window.removeEventListener('pointerdown', onPointerDown, true);
+          window.removeEventListener('keydown', onKeyDown, true);
+        };
+      }, [docked, ctx]);
+      const seatState = sessionStates.get(sessionId);
+      if (seatState === undefined || runtime.owner !== sessionId) return null;
+      const empty = seatState.tabs.length === 0 && seatState.notice === null && seatState.pending === null;
+      // Nothing to show is not a reason to cover the conversation.
+      if (docked === true && empty === true) return null;
+      const dockWidth = docked === true ? clampDockWidth(runtime.dockWidth) : runtime.dockWidth;
       return React.createElement('div', {
         className: 'dfp-root',
         ref,
         tabIndex: -1,
         'data-dock': docked ? 'true' : undefined,
-        style: docked ? { '--dfp-dock-width': `${runtime.dockWidth}px` } : undefined,
+        style: docked ? { '--dfp-dock-width': `${dockWidth}px` } : undefined,
         onKeyDown: (event) => handleKey(event, ctx, sessionId)
       },
         docked
@@ -1738,6 +1762,12 @@ body[data-ds-dark-theme] .dfp-root {
     let dockDragging = false;
     let dockMoves = 0;
 
+    /** The dock may take at most 45% of the window, and never the sidebar. */
+    function clampDockWidth(width) {
+      const limit = Math.max(280, Math.round(window.innerWidth * 0.45));
+      return Math.max(280, Math.min(width, limit));
+    }
+
     function startDockDrag(event) {
       event.preventDefault();
       event.stopPropagation();
@@ -1747,7 +1777,7 @@ body[data-ds-dark-theme] .dfp-root {
       const move = (moveEvent) => {
         dockMoves += 1;
         const max = Math.min(760, window.innerWidth - 140);
-        runtime.dockWidth = Math.max(300, Math.min(max, startWidth + (startX - moveEvent.clientX)));
+        runtime.dockWidth = clampDockWidth(Math.max(300, Math.min(max, startWidth + (startX - moveEvent.clientX))));
         notify();
       };
       const up = () => {
@@ -2532,7 +2562,7 @@ body[data-ds-dark-theme] .dfp-root {
           }))
         }
       };
-      console.log('[dsh-file-panel] ready 0.3.8', { wrapped, primitives: primitives !== null });
+      console.log('[dsh-file-panel] ready 0.3.9', { wrapped, primitives: primitives !== null });
     }
 
     const inject = ['slots', 'sessions', 'layout', 'remote', 'remote.session'];
