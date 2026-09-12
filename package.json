@@ -3,14 +3,32 @@
   "version": "0.1.0",
   "description": "True edit-message for DeepSeek Harness: replace a user message in place, truncate everything after it, and regenerate from that exact point.",
   "type": "module",
-  "main": "./index.js",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "types": "./lib/types/client/index.d.ts",
+      "default": "./lib/client.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
   "bin": {
     "dsh-message-edit": "./bin/dsh-message-edit.mjs"
   },
-  "exports": {
-    ".": "./index.js",
-    "./client": "./client.js",
-    "./package.json": "./package.json"
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "bin",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
   },
   "keywords": [
     "dsh",
@@ -20,31 +38,28 @@
     "regenerate"
   ],
   "license": "MIT",
-  "engines": {
-    "node": ">=20"
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thanhdz235123-commits/dsh-message-edit.git"
+  },
+  "homepage": "https://github.com/thanhdz235123-commits/dsh-message-edit#readme",
+  "bugs": {
+    "url": "https://github.com/thanhdz235123-commits/dsh-message-edit/issues"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
     },
     "client": {
-      "inject": [
-        "@deepseek-ai/dsh-client-ui-primitives"
-      ],
+      "inject": [],
       "immediately": true,
       "platform": "web"
     }
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1"
-  },
-  "files": [
-    "index.js",
-    "client.js",
-    "cordis.patch.yml",
-    "bin/",
-    "tools/",
-    "README.md",
-    "LICENSE"
-  ]
+  }
 }

@@ -35,7 +35,11 @@ const REPO = `https://github.com/${AUTHOR}/${PACKAGE}`
 const DEFAULT_SPEC = `github:${AUTHOR}/${PACKAGE}`
 const MARK_START = `# >>> ${PACKAGE} (managed by \`${PACKAGE} install\` — do not edit between the markers)`
 const MARK_END = `# <<< ${PACKAGE}`
-const ASSETS = ['index.js', 'client.js', 'cordis.patch.yml', 'package.json', 'README.md', 'LICENSE']
+const ASSETS = ['cordis.patch.yml', 'package.json', 'README.md', 'LICENSE']
+/** Directories every install carries (the halves, the installer, the dev tools). */
+const ASSET_DIRS = ['lib', 'bin', 'tools']
+/** Files an install from before the `lib/` layout left at the package root. */
+const STALE_ROOT = ['index.js', 'client.js']
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -320,7 +324,7 @@ function run(command, args, cwd) {
 }
 
 function detectBuild(source) {
-  const entry = path.join(source, 'index.js')
+  const entry = path.join(source, 'lib', 'index.js')
   if (existsSync(entry) !== true) return null
   const match = /BUILD\s*=\s*'([^']+)'/.exec(readFileSync(entry, 'utf8'))
   return match === null ? null : match[1]
@@ -373,7 +377,12 @@ function install(flags) {
         copied.push(asset)
       }
     }
-    for (const directory of ['bin', 'tools']) {
+    for (const asset of STALE_ROOT) {
+      // A previous install of this package kept its halves at the root; leaving
+      // them behind would shadow nothing but confuse every reader of the profile.
+      rmSync(path.join(profile.target, asset), { force: true })
+    }
+    for (const directory of ASSET_DIRS) {
       const from = path.join(source, directory)
       if (existsSync(from) === true) cpSync(from, path.join(profile.target, directory), { recursive: true })
     }
@@ -404,7 +413,7 @@ function install(flags) {
   }
   report.howToFinish = [
     'Restart DSH Desktop so the host half (Agent edit hook + routes) is loaded.',
-    'Client half: reload the DSH window (Cmd-R / Ctrl-R) so client.js is picked up.'
+    'Client half: reload the DSH window (Cmd-R / Ctrl-R) so lib/client.js is picked up.'
   ]
   return report
 }
