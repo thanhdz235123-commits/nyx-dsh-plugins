@@ -32,6 +32,13 @@ window.__ModuleLoader__.load({
      * be edited again.
      */
     const USER_KIND_PREFIXES = ['input-message', 'dsh-message-edit', 'steering']
+    /**
+     * The picker's two glyphs, copied from `@deepseek-ai/dsh-client-ui-primitives`
+     * (`IconChevronDownOutline14`, `IconCheckOutline16`) so the frame's model chip
+     * is drawn with the same marks as the composer's.
+     */
+    const CHEVRON_PATH = 'M11.8486 5.5L11.4238 5.92383L8.69727 8.65137C8.44157 8.90706 8.21562 9.13382 8.01172 9.29785C7.79912 9.46883 7.55595 9.61756 7.25 9.66602C7.08435 9.69222 6.91565 9.69222 6.75 9.66602C6.44405 9.61756 6.20088 9.46883 5.98828 9.29785C5.78438 9.13382 5.55843 8.90706 5.30273 8.65137L2.57617 5.92383L2.15137 5.5L3 4.65137L3.42383 5.07617L6.15137 7.80273C6.42595 8.07732 6.59876 8.24849 6.74023 8.3623C6.87291 8.46904 6.92272 8.47813 6.9375 8.48047C6.97895 8.48703 7.02105 8.48703 7.0625 8.48047C7.07728 8.47813 7.12709 8.46904 7.25977 8.3623C7.40124 8.24849 7.57405 8.07732 7.84863 7.80273L10.5762 5.07617L11 4.65137L11.8486 5.5Z'
+    const CHECK_PATH = 'M15.0498 3.92579L8.49512 12.3818C8.25774 12.6881 8.04517 12.9645 7.84668 13.1689C7.63957 13.3823 7.38732 13.5841 7.04492 13.6719C6.86373 13.7183 6.6757 13.7346 6.48926 13.7197C6.13666 13.6915 5.8528 13.5355 5.6123 13.3604C5.38201 13.1926 5.12573 12.9567 4.83984 12.6953L1.03125 9.21289L1.96875 8.1875L5.77734 11.6699C6.08684 11.9529 6.27773 12.1249 6.43066 12.2363C6.50183 12.2882 6.54699 12.3135 6.57324 12.3252C6.58525 12.3305 6.59269 12.3322 6.5957 12.333C6.59802 12.3336 6.59961 12.334 6.59961 12.334C6.63317 12.3367 6.66758 12.3335 6.7002 12.3252C6.7002 12.3252 6.70211 12.3251 6.7041 12.3242C6.70698 12.3229 6.71348 12.319 6.72461 12.3115C6.74849 12.2956 6.78843 12.2642 6.84961 12.2012C6.98138 12.0654 7.13957 11.8628 7.39648 11.5313L13.9502 3.07422L15.0498 3.92579Z'
     const POLL_INTERVAL_MS = 1500
     /** Marks a Trajectory turn whose messages an edit has replaced. */
     const REPLACED_ATTR = 'data-dme-replaced'
@@ -143,12 +150,6 @@ tr[${REPLACED_ATTR}="true"][data-turn-start="true"] > td:last-child::after {
     }
 
 
-    /** "Giữ model hiện tại (…)" — the option that leaves the selection alone. */
-    function keepModelLabel(model) {
-      if (model === null || model === undefined || typeof model.model !== 'string' || model.model === '') return LABELS.modelKeep
-      return `${LABELS.modelKeep} (${model.model})`
-    }
-
     /** The host's model catalog, shared by every frame opened in this page. */
     let modelCatalog = null
     let modelCatalogAt = 0
@@ -163,32 +164,265 @@ tr[${REPLACED_ATTR}="true"][data-turn-start="true"] > td:last-child::after {
     }
 
     /**
-     * Fill the frame's picker from the host's catalog. The value carries both
-     * halves of the choice, because a model id means nothing without its provider.
+     * The picker's two marks, drawn with the same paths, view boxes and sizes as
+     * `@deepseek-ai/dsh-client-ui-primitives`' `IconChevronDownOutline14` and
+     * `IconCheckOutline16` — the composer's chip uses those exact glyphs.
      */
-    async function fillModelOptions(ctx, select) {
-      try {
-        const catalog = await loadModelCatalog(ctx)
+    function chevronMark() {
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+      svg.setAttribute('viewBox', '0 0 14 14')
+      svg.setAttribute('width', '14')
+      svg.setAttribute('height', '14')
+      svg.setAttribute('aria-hidden', 'true')
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+      path.setAttribute('d', CHEVRON_PATH)
+      path.setAttribute('fill', 'currentColor')
+      svg.append(path)
+      return svg
+    }
+
+    function checkMark() {
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+      svg.setAttribute('viewBox', '0 0 16 16')
+      svg.setAttribute('width', '16')
+      svg.setAttribute('height', '16')
+      svg.setAttribute('aria-hidden', 'true')
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+      path.setAttribute('d', CHECK_PATH)
+      path.setAttribute('fill', 'currentColor')
+      svg.append(path)
+      return svg
+    }
+
+    /** One catalog entry, addressed the way a choice is. */
+    function modelKey(provider, model) {
+      return `${provider}\u0000${model}`
+    }
+
+    /**
+     * The frame's model picker: the chip and the menu built to the measurements
+     * the app's own `ModelSelect` module uses — same tokens, same radii, same
+     * typography, same check mark — so an edit frame reads as part of the app
+     * rather than a control bolted onto it.
+     *
+     * The chip always names the model that would answer: the chosen one once the
+     * reader picks, the session's current one until then.
+     *
+     * @returns {{row: HTMLElement, value: () => string, label: () => string}}
+     */
+    function mountModelPicker(ctx, sessionId, current) {
+      const row = document.createElement('div')
+      row.className = 'dme-model-row'
+
+      const caption = document.createElement('span')
+      caption.className = 'dme-model-label'
+      caption.textContent = LABELS.model
+
+      const trigger = document.createElement('button')
+      trigger.type = 'button'
+      trigger.className = 'dme-model-trigger'
+      trigger.dataset.dmeAction = 'model'
+      trigger.setAttribute('aria-haspopup', 'menu')
+      trigger.setAttribute('aria-expanded', 'false')
+      const name = document.createElement('span')
+      name.className = 'dme-model-name'
+      const effort = document.createElement('span')
+      effort.className = 'dme-model-effort'
+      const chevron = chevronMark()
+      chevron.setAttribute('class', 'dme-model-chevron')
+      trigger.append(name, effort, chevron)
+
+      const menu = document.createElement('div')
+      menu.className = 'dme-model-menu'
+      menu.setAttribute('role', 'menu')
+      menu.hidden = true
+      const groups = document.createElement('div')
+      groups.className = 'dme-model-groups'
+      menu.append(groups)
+      row.append(caption, trigger, menu)
+
+      /** @type {Map<string, {name: string, efforts: Map<string, string>}>} */
+      const entries = new Map()
+      let chosen = null
+      let open = false
+
+      const effective = () => chosen ?? current ?? null
+
+      const effortLabelOf = (selection, entry) => {
+        const id = selection?.effort
+        if (typeof id !== 'string' || id === '') return ''
+        return entry?.efforts?.get(id) ?? id
+      }
+
+      /** Repaint the chip and the check marks from the current choice. */
+      const paint = () => {
+        const selection = effective()
+        const entry = selection === null ? undefined : entries.get(modelKey(selection.provider, selection.model))
+        name.textContent = selection === null ? LABELS.modelKeep : entry?.name ?? selection.model
+        name.title = name.textContent
+        const effortLabel = selection === null ? '' : effortLabelOf(selection, entry)
+        effort.textContent = effortLabel === '' ? '' : ` ${effortLabel}`
+        const wanted = selection === null ? '' : modelKey(selection.provider, selection.model)
+        for (const option of groups.querySelectorAll('.dme-model-option')) {
+          const isChosen = (option.dataset.modelKey ?? '') === wanted
+          option.setAttribute('aria-checked', isChosen ? 'true' : 'false')
+          const slot = option.querySelector('.dme-model-check')
+          slot.textContent = ''
+          if (isChosen) slot.append(checkMark())
+        }
+      }
+
+      /** Place the menu above the chip when there is room, below when there is not. */
+      const place = () => {
+        const rect = trigger.getBoundingClientRect()
+        const box = menu.getBoundingClientRect()
+        const margin = 12
+        const roomAbove = rect.top - margin
+        const above = roomAbove >= Math.min(box.height, 260)
+        const top = above
+          ? Math.max(margin, rect.top - Math.min(box.height, roomAbove) - 4)
+          : Math.min(rect.bottom + 4, window.innerHeight - box.height - margin)
+        const left = Math.max(margin, Math.min(rect.left, window.innerWidth - box.width - margin))
+        menu.style.top = `${Math.round(top)}px`
+        menu.style.left = `${Math.round(left)}px`
+      }
+
+      const onOutside = (event) => {
+        if (menu.contains(event.target) === true || trigger.contains(event.target) === true) return
+        close()
+      }
+
+      const onKey = (event) => {
+        if (event.key === 'Escape') {
+          event.stopPropagation()
+          close()
+          trigger.focus()
+          return
+        }
+        if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+        event.preventDefault()
+        const options = [...groups.querySelectorAll('.dme-model-option')]
+        if (options.length === 0) return
+        const at = options.indexOf(document.activeElement)
+        const step = event.key === 'ArrowDown' ? 1 : -1
+        const from = at < 0 ? (step === 1 ? -1 : 0) : at
+        options[(((from + step) % options.length) + options.length) % options.length].focus()
+      }
+
+      function close() {
+        if (open !== true) return
+        open = false
+        menu.hidden = true
+        trigger.setAttribute('aria-expanded', 'false')
+        window.removeEventListener('pointerdown', onOutside, true)
+        window.removeEventListener('keydown', onKey, true)
+        window.removeEventListener('scroll', place, true)
+        window.removeEventListener('resize', place)
+      }
+
+      const show = () => {
+        if (open === true) return
+        open = true
+        menu.hidden = false
+        trigger.setAttribute('aria-expanded', 'true')
+        place()
+        requestAnimationFrame(place)
+        window.addEventListener('pointerdown', onOutside, true)
+        window.addEventListener('keydown', onKey, true)
+        window.addEventListener('scroll', place, true)
+        window.addEventListener('resize', place)
+      }
+
+      trigger.addEventListener('pointerdown', (event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        if (open) close()
+        else show()
+      })
+
+      const choose = (selection) => {
+        chosen = selection
+        paint()
+        close()
+        trigger.focus()
+      }
+
+      /** Build the option rows from the host's catalog, once per frame. */
+      const fill = (catalog) => {
+        groups.textContent = ''
+        entries.clear()
+        const keep = document.createElement('button')
+        keep.type = 'button'
+        keep.className = 'dme-model-option'
+        keep.setAttribute('role', 'menuitemradio')
+        keep.dataset.modelKey = ''
+        const keepCopy = document.createElement('span')
+        keepCopy.className = 'dme-model-copy'
+        const keepName = document.createElement('span')
+        keepName.className = 'dme-model-option-name'
+        keepName.textContent = current === null || current === undefined
+          ? LABELS.modelKeep
+          : `${LABELS.modelKeep} (${current.model})`
+        keepCopy.append(keepName)
+        const keepCheck = document.createElement('span')
+        keepCheck.className = 'dme-model-check'
+        keep.append(keepCopy, keepCheck)
+        keep.addEventListener('click', () => { choose(null) })
+        groups.append(keep)
+
         for (const group of Array.isArray(catalog?.groups) ? catalog.groups : []) {
           const models = Array.isArray(group?.models) ? group.models : []
           if (models.length === 0) continue
-          const holder = document.createElement('optgroup')
-          holder.label = typeof group.name === 'string' && group.name !== '' ? group.name : String(group.id ?? '')
+          const section = document.createElement('section')
+          section.className = 'dme-model-group'
+          section.setAttribute('role', 'group')
+          const title = document.createElement('div')
+          title.className = 'dme-model-group-title'
+          title.textContent = typeof group.name === 'string' && group.name !== '' ? group.name : String(group.id ?? '')
+          section.append(title)
           for (const model of models) {
-            const option = document.createElement('option')
-            option.value = `${group.id}\u0000${model.id}`
-            option.textContent = typeof model.name === 'string' && model.name !== '' ? model.name : String(model.id)
-            holder.append(option)
+            const efforts = new Map()
+            for (const item of Array.isArray(model?.reasoning?.efforts) ? model.reasoning.efforts : []) {
+              if (typeof item?.id === 'string') efforts.set(item.id, typeof item.name === 'string' ? item.name : item.id)
+            }
+            const entry = {
+              name: typeof model.name === 'string' && model.name !== '' ? model.name : String(model.id),
+              efforts
+            }
+            entries.set(modelKey(group.id, model.id), entry)
+            const option = document.createElement('button')
+            option.type = 'button'
+            option.className = 'dme-model-option'
+            option.setAttribute('role', 'menuitemradio')
+            option.dataset.modelKey = modelKey(group.id, model.id)
+            option.title = entry.name
+            const copy = document.createElement('span')
+            copy.className = 'dme-model-copy'
+            const optionName = document.createElement('span')
+            optionName.className = 'dme-model-option-name'
+            optionName.textContent = entry.name
+            copy.append(optionName)
+            const slot = document.createElement('span')
+            slot.className = 'dme-model-check'
+            option.append(copy, slot)
+            option.addEventListener('click', () => { choose({ provider: group.id, model: model.id }) })
+            section.append(option)
           }
-          select.append(holder)
+          groups.append(section)
         }
-        if (select.querySelectorAll('option').length <= 1) {
-          select.disabled = true
-          select.title = 'Không có model nào để chọn'
-        }
-      } catch (error) {
-        select.disabled = true
-        select.title = error instanceof Error ? error.message : String(error)
+        paint()
+      }
+
+      void loadModelCatalog(ctx).then(fill).catch((error) => {
+        trigger.disabled = true
+        trigger.title = error instanceof Error ? error.message : String(error)
+      })
+      paint()
+
+      return {
+        row,
+        value: () => (chosen === null ? '' : modelKey(chosen.provider, chosen.model)),
+        label: () => name.textContent
       }
     }
 
@@ -667,20 +901,7 @@ tr[${REPLACED_ATTR}="true"][data-turn-start="true"] > td:last-child::after {
       // A re-run is a new answer, and a new answer may deserve another model:
       // the picker below hands the harness the same selection its own composer
       // picker does, so the regenerating request leaves on the chosen one.
-      const modelRow = document.createElement('div')
-      modelRow.className = 'dme-model-row'
-      const modelLabel = document.createElement('span')
-      modelLabel.className = 'dme-model-label'
-      modelLabel.textContent = LABELS.model
-      const modelSelect = document.createElement('select')
-      modelSelect.className = 'dme-model'
-      modelSelect.dataset.dmeAction = 'model'
-      const keepOption = document.createElement('option')
-      keepOption.value = ''
-      keepOption.textContent = keepModelLabel(message?.model ?? stateSnapshot()?.model ?? null)
-      modelSelect.append(keepOption)
-      modelRow.append(modelLabel, modelSelect)
-      void fillModelOptions(ctx, modelSelect)
+      const modelPicker = mountModelPicker(ctx, sessionId, stateSnapshot()?.model ?? null)
 
       const actions = document.createElement('div')
       actions.className = 'dme-actions'
@@ -699,7 +920,7 @@ tr[${REPLACED_ATTR}="true"][data-turn-start="true"] > td:last-child::after {
       send.textContent = LABELS.send
       actions.append(hint, cancel, send)
 
-      card.append(imageRow, textarea, modelRow, status, actions)
+      card.append(imageRow, textarea, modelPicker.row, status, actions)
       host.appendChild(card)
       // Bring the message being edited into view first: the frame anchors to the
       // row, so opening it off-screen would look like nothing happened.
@@ -785,11 +1006,11 @@ tr[${REPLACED_ATTR}="true"][data-turn-start="true"] > td:last-child::after {
           messageId,
           textLength: textarea.value.length,
           keptImages: keptImages.length,
-          model: modelSelect.value === '' ? null : modelSelect.value.split('\u0000').join('/'),
+          model: modelPicker.value() === '' ? null : modelPicker.value().split('\u0000').join('/'),
           key
         })
         try {
-          const chosen = await applyModelChoice(ctx, sessionId, modelSelect.value)
+          const chosen = await applyModelChoice(ctx, sessionId, modelPicker.value())
           if (chosen !== null) postDiag({ phase: 'model', messageId, provider: chosen.provider, model: chosen.model })
           const result = await postEdit(sessionId, messageId, textarea.value, keptImages)
           postDiag({ phase: 'sent', messageId, changed: result?.changed !== false, seq: result?.seq ?? null, reason: result?.reason ?? null })
@@ -944,19 +1165,60 @@ tr[${REPLACED_ATTR}="true"][data-turn-start="true"] > td:last-child::after {
   color: var(--dsw-alias-state-error-primary, #ff6b6b);
 }
 #${EDITOR_ID} .dme-status:empty { display: none; }
-#${EDITOR_ID} .dme-model-row { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+#${EDITOR_ID} .dme-model-row { display: flex; align-items: center; gap: 6px; margin-top: 4px; min-width: 0; }
 #${EDITOR_ID} .dme-model-label {
   flex: none; font-size: var(--dsh-content-font-size-secondary, 12px); line-height: 16px;
   color: var(--dsw-alias-label-caption, #77787f);
 }
-#${EDITOR_ID} .dme-model {
-  min-width: 0; max-width: 260px; height: 28px; padding: 0 8px; cursor: pointer;
-  border-radius: 8px; border: .5px solid var(--dsw-alias-border-l1, #303036);
-  background: var(--dsw-alias-bg-layer-1, #232329);
-  color: var(--dsw-alias-label-primary, #fff);
+/* The chip and the menu follow the app's own ModelSelect measurements: a 28px
+   pill trigger, a 20px-radius menu on the menu token, 38px option rows. */
+#${EDITOR_ID} .dme-model-trigger {
+  display: flex; align-items: center; gap: 4px; min-width: 0;
+  max-width: min(360px, 45vw); height: 28px; padding: 0 4px 0 8px; border: none;
+  border-radius: 24px; background: none; cursor: pointer; outline: none;
+  color: var(--dsw-alias-label-secondary);
+  font: 500 13px/20px Inter, var(--dsw-font-family), sans-serif;
+}
+#${EDITOR_ID} .dme-model-trigger:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); }
+#${EDITOR_ID} .dme-model-trigger:focus-visible { box-shadow: 0 0 0 2px var(--dsw-alias-border-l3); }
+#${EDITOR_ID} .dme-model-trigger:disabled { color: var(--dsw-alias-label-dimmed); cursor: default; }
+#${EDITOR_ID} .dme-model-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#${EDITOR_ID} .dme-model-effort { flex: none; color: var(--dsw-alias-label-caption); }
+#${EDITOR_ID} .dme-model-chevron { flex: none; color: var(--dsw-alias-label-caption); transition: transform .12s; }
+#${EDITOR_ID} .dme-model-trigger[aria-expanded="true"] .dme-model-chevron { transform: rotate(180deg); }
+#${EDITOR_ID} .dme-model-menu {
+  position: fixed; z-index: 2147483001; display: flex; flex-direction: column;
+  width: max-content; min-width: min(240px, 100vw - 32px); max-width: min(420px, 100vw - 32px);
+  max-height: min(360px, 100vh - 96px); padding: 4px; overflow: hidden;
+  border: 0; border-radius: 20px; background: var(--dsw-specific-menu);
+  box-shadow: var(--dsw-elevation-prominent); color: var(--dsw-alias-label-primary);
+}
+#${EDITOR_ID} .dme-model-menu[hidden] { display: none; }
+#${EDITOR_ID} .dme-model-groups { min-height: 0; overflow-y: auto; }
+#${EDITOR_ID} .dme-model-group + .dme-model-group { margin-top: 4px; }
+#${EDITOR_ID} .dme-model-group-title {
+  position: sticky; top: 0; z-index: 1; padding: 5px 8px 3px;
+  background: var(--dsw-specific-menu); color: var(--dsw-alias-label-tertiary);
   font: 500 12px/18px Inter, var(--dsw-font-family), sans-serif;
 }
-#${EDITOR_ID} .dme-model:disabled { opacity: .5; cursor: default; }
+#${EDITOR_ID} .dme-model-option {
+  box-sizing: border-box; display: flex; align-items: center; gap: 8px;
+  width: auto; min-width: 100%; min-height: 38px; padding: 6px 8px;
+  border: none; border-radius: 10px; background: none; color: inherit;
+  text-align: left; cursor: pointer; outline: none;
+}
+#${EDITOR_ID} .dme-model-option:hover:not(:disabled), #${EDITOR_ID} .dme-model-option:focus-visible {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+#${EDITOR_ID} .dme-model-option:disabled { color: var(--dsw-alias-label-dimmed); cursor: default; }
+#${EDITOR_ID} .dme-model-copy { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+#${EDITOR_ID} .dme-model-option-name {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: 500 14px/20px Inter, var(--dsw-font-family), sans-serif;
+}
+#${EDITOR_ID} .dme-model-check {
+  display: grid; place-items: center; flex: 0 0 18px; color: var(--dsw-alias-label-primary);
+}
 #${EDITOR_ID} .dme-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 #${EDITOR_ID} .dme-hint {
   margin-right: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -1074,14 +1336,31 @@ tr[${REPLACED_ATTR}="true"][data-turn-start="true"] > td:last-child::after {
           chip.querySelector('.dme-chip-x')?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
           return true
         },
-        modelOptions: () => [...document.querySelectorAll('#dsh-message-edit-editor .dme-model option')]
-          .map((option) => ({ value: option.value, label: option.textContent })),
+        modelOptions: () => [...document.querySelectorAll('#dsh-message-edit-editor .dme-model-option')]
+          .map((option) => ({ value: option.dataset.modelKey ?? '', label: option.textContent })),
+        modelTrigger: () => {
+          const trigger = document.querySelector('#dsh-message-edit-editor .dme-model-trigger')
+          if (trigger === null) return null
+          return { text: trigger.textContent, expanded: trigger.getAttribute('aria-expanded'), disabled: trigger.disabled }
+        },
+        openModelMenu: () => {
+          const trigger = document.querySelector('#dsh-message-edit-editor .dme-model-trigger')
+          if (trigger === null) return false
+          trigger.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }))
+          return true
+        },
+        modelMenuBox: () => {
+          const menu = document.querySelector('#dsh-message-edit-editor .dme-model-menu')
+          if (menu === null || menu.hidden) return null
+          const box = menu.getBoundingClientRect()
+          return { x: Math.round(box.x), y: Math.round(box.y), w: Math.round(box.width), h: Math.round(box.height) }
+        },
         chooseModel: (value) => {
-          const select = document.querySelector('#dsh-message-edit-editor .dme-model')
-          if (select === null) return false
-          select.value = value
-          select.dispatchEvent(new Event('change', { bubbles: true }))
-          return select.value === value
+          const option = [...document.querySelectorAll('#dsh-message-edit-editor .dme-model-option')]
+            .find((node) => (node.dataset.modelKey ?? '') === value)
+          if (option === undefined) return false
+          option.click()
+          return true
         },
         sendEditor: () => {
           const host = document.getElementById(EDITOR_ID)
