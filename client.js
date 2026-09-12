@@ -2688,6 +2688,34 @@ body[data-ds-dark-theme] .dfp-root {
       return sameName.length === 1 ? sameName[0] : null;
     }
 
+    /**
+     * Resolve a token without the resolver route: the answer a host that
+     * predates `locate` can still give. Absolute and home forms are taken as
+     * written, a relative name prefers the session's own file record, and the
+     * workspace root is the last resort.
+     */
+    async function locateWithoutResolver(sessionId, requested, cwd) {
+      const asWritten = requested.startsWith('/') || requested.startsWith('~') || /^[a-zA-Z]:[/\\]/.test(requested);
+      if (asWritten === true) return requested;
+      if (/\s/.test(requested) === true) return null;
+      try {
+        const answer = await callHost('references', { sessionId });
+        const paths = Array.isArray(answer?.paths) ? answer.paths : [];
+        const wanted = lexicalNormalize(requested);
+        const recorded = paths.filter((candidate) => {
+          const normalized = lexicalNormalize(candidate);
+          return normalized === wanted || normalized.endsWith(`/${wanted}`);
+        });
+        if (recorded.length > 0) return recorded[0];
+        const base = wanted.split('/').pop();
+        const sameName = paths.filter((candidate) => candidate.split(/[/\\]/).pop() === base);
+        if (sameName.length === 1) return sameName[0];
+      } catch {
+        /* no record available: fall through to the workspace root */
+      }
+      return typeof cwd === 'string' && cwd.length > 0 ? `${cwd.replace(/[/\\]+$/, '')}/${requested}` : requested;
+    }
+
     async function openPath(ctx, rawPath, options) {
       ensureStyles();
       const facts = sessionFacts(ctx);
@@ -2697,36 +2725,38 @@ body[data-ds-dark-theme] .dfp-root {
       const requested = lexicalNormalize(String(rawPath ?? '').trim());
       if (requested.length === 0) return;
 
-      // One resolver decides what this token is. It owns every rule about
-      // absolute forms, the session's own file record, and the workspace root;
-      // the panel only reports what it answered, so no join or guess lives here.
+      // The panel is shown FIRST. A click must always put something on screen:
+      // silence is the one answer a reader cannot tell apart from a broken app.
+      runtime.visible = true;
+      if (runtime.dockWidth > defaultDockWidth()) runtime.dockWidth = defaultDockWidth();
+      applyPanelHost(ctx, sessionId);
+      // The workspace root is known whether or not the path turns out to exist:
+      // the refused notice and the tree still need somewhere to point at.
+      mutate(sessionId, (state) => { state.cwd = cwd });
+
+      // One resolver owns every rule about what this token means. A host that
+      // has not got the route yet is answered locally instead, never silently.
       const located = await callHost('locate', { sessionId, cwd, token: requested }).catch(() => null);
       if (located === null) {
-        refuseOpen(sessionId, { kind: 'missing', path: requested, requested, base: cwd ?? null, at: Date.now() });
+        const candidate = await locateWithoutResolver(sessionId, requested, cwd);
+        if (candidate === null) return;
+        await openFile(sessionId, candidate, { cwd });
         return;
       }
       if (located.kind === 'not-a-path') return;
       const resolvedPath = typeof located.path === 'string' && located.path.length > 0 ? nativePath(located.path) : requested;
-      if (located.kind !== 'open') {
-        if (located.kind === 'choose') {
-          const options = (Array.isArray(located.options) ? located.options : []).map((entry) => nativePath(entry));
-          if (options.length > 1) {
-            runtime.visible = true;
-            if (runtime.dockWidth > defaultDockWidth()) runtime.dockWidth = defaultDockWidth();
-            applyPanelHost(ctx, sessionId);
-            mutate(sessionId, (state) => { state.cwd = cwd });
-            chooseOpen(sessionId, { kind: 'choose', requested, base: cwd ?? null, options, at: Date.now() });
-            return;
-          }
-          if (options.length === 1) {
-            await openFile(sessionId, options[0], { cwd });
-            return;
-          }
+      if (located.kind === 'choose') {
+        const options = (Array.isArray(located.options) ? located.options : []).map((entry) => nativePath(entry));
+        if (options.length === 1) {
+          await openFile(sessionId, options[0], { cwd });
+          return;
         }
-        runtime.visible = true;
-        if (runtime.dockWidth > defaultDockWidth()) runtime.dockWidth = defaultDockWidth();
-        applyPanelHost(ctx, sessionId);
-        mutate(sessionId, (state) => { state.cwd = cwd });
+        if (options.length > 1) {
+          chooseOpen(sessionId, { kind: 'choose', requested, base: cwd ?? null, options, at: Date.now() });
+          return;
+        }
+      }
+      if (located.kind !== 'open') {
         refuseOpen(sessionId, { kind: 'missing', path: resolvedPath, requested, base: cwd ?? null, at: Date.now() });
         return;
       }
