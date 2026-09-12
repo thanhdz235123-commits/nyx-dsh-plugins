@@ -1619,6 +1619,15 @@ body[data-ds-dark-theme] .dfp-root {
         notice.requested !== notice.path
           ? React.createElement('div', { className: 'dfp-sub' }, `The link named “${notice.requested}”, read from the workspace root.`)
           : null,
+        // Always name the base: a relative link is resolved against the session
+        // folder, and that is the one fact a reader needs to see why it missed.
+        React.createElement('div', {
+          className: 'dfp-sub',
+          title: 'Relative links resolve against the session folder',
+          onClick: () => void copyText(String(notice.base ?? ''))
+        }, String(notice.base ?? '') === ''
+          ? 'The session folder is unknown, so the path was used as written.'
+          : `Relative links resolve against the session folder: ${notice.base}`),
         React.createElement('div', { className: 'dfp-sub' }, 'Only files that exist can be opened. Nothing was searched for and nothing was opened.'),
         React.createElement('div', { className: 'dfp-stats' },
           React.createElement('button', {
@@ -2594,7 +2603,7 @@ body[data-ds-dark-theme] .dfp-root {
       // the exact path it tried — no tab, no content, no guess.
       const stat = await callHost('stat', { path: absolute, cwd }).catch(() => null);
       if (stat === null) {
-        refuseOpen(sessionId, { kind: 'missing', path: absolute, requested, at: Date.now() });
+        refuseOpen(sessionId, { kind: 'missing', path: absolute, requested, base: cwd ?? null, at: Date.now() });
         return;
       }
       // The host answers with the path it actually resolved, which is the only
@@ -2648,7 +2657,7 @@ body[data-ds-dark-theme] .dfp-root {
       const cwd = options?.cwd ?? sessionState(sessionId).cwd;
       const stat = await callHost('stat', { path: normalized, cwd }).catch(() => null);
       if (stat === null) {
-        refuseOpen(sessionId, { kind: 'missing', path: normalized, requested: normalized, at: Date.now() });
+        refuseOpen(sessionId, { kind: 'missing', path: normalized, requested: normalized, base: cwd ?? null, at: Date.now() });
         return;
       }
       if (stat.isDirectory === true) {
