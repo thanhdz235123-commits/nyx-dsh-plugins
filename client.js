@@ -65,7 +65,7 @@ window.__ModuleLoader__.load({
 
     /** The build this client is. Shown in the footer so it is never a guess
      *  which version a window is running. */
-    const CLIENT_BUILD = '0.5.4';
+    const CLIENT_BUILD = '0.5.5';
 
     let tabSeq = 0;
 
@@ -2522,6 +2522,31 @@ body[data-ds-dark-theme] .dfp-root {
       canvas.title = open
         ? 'Close the file panel (⌥⌘F)'
         : hasWork ? 'Reopen the file panel (⌥⌘F)' : 'Open the file panel (⌥⌘F)';
+    }
+
+    /**
+     * Show the tab at `index`. The strip is the only way back to a file that is
+     * already open, so this is the dullest function in the panel: set the active
+     * index, load anything that never loaded, paint. It went missing in a
+     * refactor once and every click on a file tab died silently — the suite
+     * clicks a tab now.
+     */
+    function activateTab(sessionId, index) {
+      if (sessionId === null || sessionId === undefined) return;
+      const state = sessionStates.get(sessionId);
+      if (state === undefined) return;
+      if (state.tabs[index] === undefined) return;
+      mutate(sessionId, (target) => {
+        target.active = index;
+        target.notice = null;
+        target.palette.open = false;
+        target.pending = null;
+        trace(target, 'tab-activate', { index, path: target.tabs[index]?.path ?? null });
+      });
+      const current = sessionState(sessionId).tabs[index];
+      if (current === undefined) return;
+      if (current.file === null && current.loading !== true && current.error === null) void loadFile(sessionId, current.id);
+      if (current.diff === null && current.loadingDiff !== true) void loadDiff(sessionId, current.id);
     }
 
     function closeTab(sessionId, index) {
