@@ -65,7 +65,7 @@ window.__ModuleLoader__.load({
 
     /** The build this client is. Shown in the footer so it is never a guess
      *  which version a window is running. */
-    const CLIENT_BUILD = '0.6.0';
+    const CLIENT_BUILD = '0.6.1';
 
     let tabSeq = 0;
 
@@ -2399,6 +2399,184 @@ body[data-ds-dark-theme] .dfp-root {
     let chatEditMoveHandler = null;
     let chatEditScrollHandler = null;
 
+    // ------------------------------------------------------------------
+    // message versions — an edit is a new session version of the same message.
+    // DSH has no branching inside one session (its log is append-only and its
+    // own "branch" button also creates a session), so the family is recorded
+    // here and drawn as a version ring under the bubble: the conversation reads
+    // as one thread with ‹ n/m ›, exactly the way the web does it.
+    // ------------------------------------------------------------------
+    const VERSIONS_KEY = 'dsh-file-panel.message-versions.v1';
+
+    function loadVersionBook() {
+      if (typeof window === 'undefined' || window.localStorage === undefined) return { families: {}, byKey: {} };
+      try {
+        const parsed = JSON.parse(window.localStorage.getItem(VERSIONS_KEY) ?? '');
+        if (parsed !== null && typeof parsed === 'object' && parsed.families !== undefined) return parsed;
+      } catch {
+        /* first run, or storage disabled */
+      }
+      return { families: {}, byKey: {} };
+    }
+
+    function saveVersionBook(book) {
+      try {
+        window.localStorage.setItem(VERSIONS_KEY, JSON.stringify(book));
+      } catch {
+        /* private window: versions simply do not persist */
+      }
+    }
+
+    function versionKeyOf(sessionId, turn) {
+      return `${String(sessionId)}#${String(turn)}`;
+    }
+
+    /** Which family and index this message is, or null when it has no versions. */
+    function versionSlotFor(sessionId, turn) {
+      if (sessionId === null || sessionId === undefined || turn === null) return null;
+      const book = loadVersionBook();
+      const slot = book.byKey[versionKeyOf(sessionId, turn)];
+      if (slot === undefined) return null;
+      const family = book.families[slot.family];
+      if (family === undefined) return null;
+      return { familyId: slot.family, index: slot.index, total: family.versions.length, versions: family.versions };
+    }
+
+    /**
+     * Record that `sessionId`'s turn now has one more version. The first edit of
+     * a message seeds the family with the version being replaced, so the ring
+     * starts at 1 and always has somewhere to go back to.
+     */
+    function recordVersion(previous, sessionId, turn, beforeText, afterText, familyId) {
+      const book = loadVersionBook();
+      let family = familyId === null || familyId === undefined ? null : book.families[familyId] ?? null;
+      if (family === null) {
+        const slot = versionSlotFor(previous.sessionId, previous.turn);
+        if (slot !== null) {
+          family = book.families[slot.familyId];
+        } else if (previous.turn !== null && previous.turn !== undefined) {
+          const id = `${String(previous.sessionId)}@${String(previous.turn)}`;
+          family = { id, versions: [{ sessionId: previous.sessionId, turn: previous.turn, text: beforeText, at: Date.now() }] };
+          book.families[id] = family;
+          book.byKey[versionKeyOf(previous.sessionId, previous.turn)] = { family: id, index: 0 };
+        }
+      }
+      if (family === null) return null;
+      if (turn === null || turn === undefined) return family.id;
+      family.versions.push({ sessionId, turn, text: afterText, at: Date.now() });
+      book.byKey[versionKeyOf(sessionId, turn)] = { family: family.id, index: family.versions.length - 1 };
+      saveVersionBook(book);
+      return family.id;
+    }
+
+    function versionChipHost() {
+      const host = chatEditHostNode();
+      if (host === null) return null;
+      let chipLayer = host.querySelector('[data-dfp-version-layer]');
+      if (chipLayer === null) {
+        chipLayer = document.createElement('div');
+        chipLayer.setAttribute('data-dfp-version-layer', '1');
+        chipLayer.style.cssText = 'position:absolute;inset:0;pointer-events:none';
+        host.appendChild(chipLayer);
+      }
+      return chipLayer;
+    }
+
+    let versionChips = new Map();
+
+    function removeVersionChips() {
+      for (const chip of versionChips.values()) chip.remove();
+      versionChips = new Map();
+    }
+
+    /** Draw ‹ n/m › under every message of the conversation that has versions. */
+    function placeVersionChips() {
+      if (chatEditEnabled !== true) return 0;
+      const sessionId = panelContext === null ? null : currentSessionId(panelContext);
+      if (sessionId === null) return 0;
+      const rows = chatEditRows().filter((row) => versionSlotFor(sessionId, row.getAttribute('data-chat-turn')) !== null);
+      if (rows.length === 0) { removeVersionChips(); return 0; }
+      const layer = versionChipHost();
+      if (layer === null) return 0;
+      const wanted = new Set();
+      let drawn = 0;
+      for (const row of rows) {
+        const turn = row.getAttribute('data-chat-turn');
+        const slot = versionSlotFor(sessionId, turn);
+        if (slot === null) continue;
+        const bubble = chatEditBubbleOf(row) ?? row;
+        const box = bubble.getBoundingClientRect();
+        if (box.width === 0) continue;
+        wanted.add(String(turn));
+        const existing = versionChips.get(String(turn));
+        if (existing !== undefined && existing.isConnected === true) {
+          const wantedIndex = String(slot.index);
+          if (existing.getAttribute('data-dfp-version') === wantedIndex) {
+            existing.style.left = `${Math.round(box.left)}px`;
+            existing.style.top = `${Math.round(box.bottom + 4)}px`;
+            drawn += 1;
+            continue;
+          }
+          existing.remove();
+          versionChips.delete(String(turn));
+        }
+        const chip = document.createElement('div');
+        chip.setAttribute('data-dfp-version', String(slot.index));
+        chip.dataset.plugin = 'dsh-file-panel';
+        chip.title = slot.versions.map((entry, index) => `${index + 1}. ${String(entry.text ?? '').slice(0, 60)}`).join('\n');
+        chip.style.cssText = 'position:absolute;pointer-events:auto;display:flex;align-items:center;gap:4px;padding:1px 6px;border-radius:999px;background:var(--dsw-alias-bg-module-platform, rgba(40,40,46,.92));color:var(--dsw-alias-label-secondary, #b9bac2);font-size:11px;line-height:16px;box-shadow:0 1px 4px rgba(0,0,0,.3)';
+        const step = (delta) => {
+          const target = slot.versions[slot.index + delta];
+          if (target === undefined) return;
+          void openVersionSession(target.sessionId);
+        };
+        const back = document.createElement('button');
+        back.type = 'button';
+        back.textContent = '‹';
+        back.disabled = slot.index === 0;
+        const forward = document.createElement('button');
+        forward.type = 'button';
+        forward.textContent = '›';
+        forward.disabled = slot.index === slot.total - 1;
+        for (const button of [back, forward]) {
+          button.style.cssText = 'appearance:none;border:none;background:transparent;color:inherit;cursor:pointer;font:inherit;padding:0 2px';
+          if (button.disabled === true) button.style.opacity = '0.35';
+        }
+        back.addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); step(-1); });
+        forward.addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); step(1); });
+        const label = document.createElement('span');
+        label.textContent = `${slot.index + 1}/${slot.total}`;
+        chip.append(back, label, forward);
+        chip.style.left = `${Math.round(box.left)}px`;
+        chip.style.top = `${Math.round(box.bottom + 4)}px`;
+        layer.appendChild(chip);
+        versionChips.set(String(turn), chip);
+        drawn += 1;
+      }
+      for (const [turn, chip] of versionChips) {
+        if (wanted.has(turn) !== true) {
+          chip.remove();
+          versionChips.delete(turn);
+        }
+      }
+      return drawn;
+    }
+
+    /** A version lives in another session: wait for it to exist, then open it. */
+    async function openVersionSession(sessionId) {
+      const ctx = panelContext;
+      if (ctx === null || typeof sessionId !== 'string' || sessionId.length === 0) return false;
+      const started = Date.now();
+      while (Date.now() - started < 8000) {
+        const known = ctx.sessions?.list?.getSnapshot?.()?.byId?.[sessionId];
+        if (known !== undefined) break;
+        await new Promise((resolve) => window.setTimeout(resolve, 150));
+      }
+      ctx.sessions.open(sessionId);
+      void postHost('diag', { reason: 'chat-edit', build: CLIENT_BUILD, step: 'version-open', target: sessionId }).catch(() => {});
+      return true;
+    }
+
     function chatEditRows() {
       return [...document.querySelectorAll('[data-chat-flow-kind="user"]')];
     }
@@ -2540,7 +2718,11 @@ body[data-ds-dark-theme] .dfp-root {
         resendable: resolved !== null,
         turn: row.getAttribute('data-chat-turn') ?? null,
         text,
-        cwd: sessionFacts(panelContext ?? { get: () => undefined }).cwd ?? null
+        cwd: sessionFacts(panelContext ?? { get: () => undefined }).cwd ?? null,
+        familyId: (() => {
+          const slot = versionSlotFor(panelContext === null ? null : currentSessionId(panelContext), row.getAttribute('data-chat-turn'));
+          return slot === null ? null : slot.familyId;
+        })()
       };
       if (chatEditCard !== null) {
         chatEditCard.remove();
@@ -2660,9 +2842,18 @@ body[data-ds-dark-theme] .dfp-root {
         const send = chatEditSendHook ?? ((session, payload) => session.prompt(payload, CHAT_EDIT_PROMPT_MODE));
         const result = await send(binding.session, [{ type: 'text', text }]);
         if (result?.ok === false) throw new Error(result?.error?.message ?? 'prompt bị từ chối');
-        chatEditSetStatus('Đã gửi vào nhánh mới');
-        reportChatEdit('sent', { seq: target.seq, child: targetSession, chars: text.length });
+        const familyId = recordVersion(
+          { sessionId, turn: target.turn },
+          targetSession,
+          target.turn,
+          target.text,
+          text,
+          target.familyId ?? null
+        );
+        chatEditSetStatus('Đã gửi · dùng ‹ › dưới tin nhắn để đổi bản');
+        reportChatEdit('sent', { seq: target.seq, child: targetSession, chars: text.length, family: familyId });
         closeChatEditor();
+        window.setTimeout(() => placeVersionChips(), 800);
       } catch (error) {
         chatEditSetStatus(`Không gửi được: ${error?.message ?? error}`);
         reportChatEdit('failed', { seq: target.seq, message: String(error?.message ?? error).slice(0, 200) });
@@ -2692,8 +2883,12 @@ body[data-ds-dark-theme] .dfp-root {
         const row = chatEditRowOf(event.target);
         if (row === null) { chatEditHideButton(); return }
         chatEditPlaceButton(row);
+        placeVersionChips();
       };
-      const onScroll = () => { if (chatEditCard === null) chatEditHideButton(); };
+      const onScroll = () => {
+        if (chatEditCard === null) chatEditHideButton();
+        placeVersionChips();
+      };
       document.addEventListener('mousemove', onMove, true);
       window.addEventListener('scroll', onScroll, true);
       chatEditMoveHandler = onMove;
@@ -2705,6 +2900,7 @@ body[data-ds-dark-theme] .dfp-root {
 
     function uninstallChatEdit() {
       if (chatEditInstalled !== true) return false;
+      removeVersionChips();
       if (chatEditMoveHandler !== null) document.removeEventListener('mousemove', chatEditMoveHandler, true);
       if (chatEditScrollHandler !== null) window.removeEventListener('scroll', chatEditScrollHandler, true);
       chatEditMoveHandler = null;
@@ -3401,6 +3597,7 @@ body[data-ds-dark-theme] .dfp-root {
         // own panel away the dock is due back, whether or not a resize event
         // bothered to arrive.
         if (runtime.suspended === true && runtime.visible === true && detailsColumnWidth() < 300) resumePanel(ctx);
+        placeVersionChips();
         if (runtime.visible !== true || runtime.owner === null) return;
         const sessionId = runtime.owner;
         const state = sessionState(sessionId);
@@ -3600,6 +3797,18 @@ body[data-ds-dark-theme] .dfp-root {
           chatEditHoverAt: (x, y) => { const row = chatEditHoverAt(x, y); return row === null ? null : (chatEditSeqOf(row) ?? null) },
           chatEditBegin: async (index) => { const rows = chatEditRows(); const row = rows[index ?? rows.length - 1] ?? null; const target = await chatEditBegin(row); return target === null ? null : { seq: target.seq, nodeSeq: target.nodeSeq, forkAt: target.forkAt, turn: target.turn, resendable: target.resendable }; },
           chatEditLog: () => (chatEditMessages.list ?? []).map((entry) => ({ seq: entry.seq, text: String(entry.text ?? '').slice(0, 60) })),
+          versions: () => {
+            const book = loadVersionBook();
+            return Object.values(book.families).map((family) => ({ id: family.id, versions: family.versions.map((v) => ({ sessionId: v.sessionId, turn: v.turn, text: String(v.text ?? '').slice(0, 50) })) }));
+          },
+          versionChips: () => document.querySelectorAll('[data-dfp-version]').length,
+          placeVersionChips: () => placeVersionChips(),
+          openVersion: (familyId, index) => {
+            const family = loadVersionBook().families[familyId];
+            const entry = family?.versions?.[index];
+            return entry === undefined ? false : openVersionSession(entry.sessionId);
+          },
+          forgetVersions: () => { saveVersionBook({ families: {}, byKey: {} }); removeVersionChips(); return true },
           chatEditSetText: (text) => { if (chatEditArea === null) return false; chatEditArea.value = text; return true },
           chatEditStatus: () => chatEditStatus === null ? null : String(chatEditStatus.textContent ?? ''),
           chatEditSubmit: () => { void submitChatEdit(); return true },
