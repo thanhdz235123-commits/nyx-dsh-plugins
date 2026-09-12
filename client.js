@@ -2547,9 +2547,15 @@ body[data-ds-dark-theme] .dfp-root {
       const cwd = options?.cwd ?? facts.cwd;
       const requested = lexicalNormalize(String(rawPath ?? '').trim());
       if (requested.length === 0) return;
-      const absolute = requested.startsWith('/') || /^[a-zA-Z]:[/\\]/.test(requested)
-        ? nativePath(requested)
-        : (typeof cwd === 'string' && cwd.length > 0 ? nativePath(`${cwd.replace(/[/\\]+$/, '')}/${requested}`) : requested);
+      // A path that starts at home is handed to the host exactly as it was
+      // written: only the host knows where home is, and joining it to the
+      // workspace root would point at a file that merely shares the name.
+      const homeRelative = requested === '~' || requested.startsWith('~/') || requested.startsWith('~\\');
+      const absolute = homeRelative === true
+        ? requested
+        : (requested.startsWith('/') || /^[a-zA-Z]:[/\\]/.test(requested)
+          ? nativePath(requested)
+          : (typeof cwd === 'string' && cwd.length > 0 ? nativePath(`${cwd.replace(/[/\\]+$/, '')}/${requested}`) : requested));
 
       runtime.visible = true;
       if (runtime.dockWidth > defaultDockWidth()) runtime.dockWidth = defaultDockWidth();
@@ -2566,31 +2572,34 @@ body[data-ds-dark-theme] .dfp-root {
         refuseOpen(sessionId, { kind: 'missing', path: absolute, requested, at: Date.now() });
         return;
       }
+      // The host answers with the path it actually resolved, which is the only
+      // canonical spelling: `~/x` becomes `/Users/…/x`, separators are native.
+      const resolved = typeof stat.path === 'string' && stat.path.length > 0 ? nativePath(stat.path) : absolute;
       if (stat.isDirectory === true) {
         mutate(sessionId, (state) => {
           state.cwd = cwd;
           state.pending = null;
           state.tab = 'files';
-          trace(state, 'link-directory', { requested, absolute });
+          trace(state, 'link-directory', { requested, absolute: resolved });
         });
-        await loadTree(sessionId, absolute);
+        await loadTree(sessionId, resolved);
         return;
       }
 
-      const relative = typeof cwd === 'string' && cwd.length > 0 && hasPrefix(absolute, cwd)
-        ? absolute.slice(cwd.length).replace(/^[/\\]+/, '')
+      const relative = typeof cwd === 'string' && cwd.length > 0 && hasPrefix(resolved, cwd)
+        ? resolved.slice(cwd.length).replace(/^[/\\]+/, '')
         : null;
       const tab = mutate(sessionId, (state) => {
         state.cwd = cwd;
         state.palette.open = false;
         state.find = { open: false, query: '', hits: [], index: 0 };
         state.pending = null;
-        const entry = pushTab(state, absolute, relative, null, null);
+        const entry = pushTab(state, resolved, relative, null, null);
         entry.error = null;
         entry.requestedPath = requested;
         state.notice = null;
         state.tab = options?.view ?? 'preview';
-        trace(state, 'link', { requested, absolute });
+        trace(state, 'link', { requested, absolute: resolved });
         return entry;
       });
       await loadFile(sessionId, tab.id);
