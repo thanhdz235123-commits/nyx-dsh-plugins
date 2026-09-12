@@ -41,7 +41,8 @@ window.__ModuleLoader__.load({
       hint: 'Esc để hủy · ⌘/Ctrl+Enter để gửi',
       failed: 'Sửa tin nhắn thất bại',
       removeImage: 'Gỡ ảnh này',
-      emptyHint: 'Gõ nội dung (hoặc giữ ảnh) để gửi'
+      emptyHint: 'Gõ nội dung (hoặc giữ ảnh) để gửi',
+      unchanged: 'Nội dung chưa đổi — sửa chữ rồi gửi lại'
     }
 
     /** The Chat transcript's row identity, as `conversationContextKey` composes it. */
@@ -82,6 +83,22 @@ window.__ModuleLoader__.load({
       const payload = await response.json().catch(() => null)
       if (payload?.ok !== true) throw new Error(payload?.error?.message ?? `state failed (${response.status})`)
       return payload.value
+    }
+
+    /**
+     * Leave the client's half of the story in the host's trace file. A click
+     * that never becomes a request is the one failure the host cannot see.
+     */
+    function postDiag(facts) {
+      try {
+        void fetch('/api/dsh-message-edit.diag', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ build: CLIENT_BUILD, ...facts })
+        }).catch(() => {})
+      } catch {
+        /* the trace never breaks the edit */
+      }
     }
 
     async function postEdit(sessionId, messageId, text, keepImages) {
@@ -518,6 +535,14 @@ window.__ModuleLoader__.load({
       repositionEditor()
       requestAnimationFrame(() => repositionEditor())
       startEditorTracking()
+      postDiag({
+        phase: 'open',
+        sessionId,
+        messageId,
+        key,
+        textLength: initialText.length,
+        images: keptImages.length
+      })
 
       let busy = false
       const syncSend = () => {
@@ -575,11 +600,36 @@ window.__ModuleLoader__.load({
         send.textContent = LABELS.sending
         syncSend()
         status.textContent = ''
+        postDiag({
+          phase: 'press',
+          sessionId,
+          messageId,
+          textLength: textarea.value.length,
+          keptImages: keptImages.length,
+          key
+        })
         try {
-          await postEdit(sessionId, messageId, textarea.value, keptImages)
+          const result = await postEdit(sessionId, messageId, textarea.value, keptImages)
+          postDiag({ phase: 'sent', messageId, changed: result?.changed !== false, seq: result?.seq ?? null, reason: result?.reason ?? null })
+          // An edit that changes nothing is not an edit: keep the frame open and
+          // say so, instead of closing on a click that produced no result.
+          if (result?.changed === false) {
+            busy = false
+            cancel.disabled = false
+            send.textContent = LABELS.send
+            status.textContent = LABELS.unchanged
+            syncSend()
+            return
+          }
           closeEditor()
           await refresh(ctx, true)
         } catch (error) {
+          postDiag({
+            phase: 'client-failed',
+            messageId,
+            code: error?.code ?? 'error',
+            message: String(error?.message ?? error).slice(0, 200)
+          })
           busy = false
           cancel.disabled = false
           send.textContent = LABELS.send

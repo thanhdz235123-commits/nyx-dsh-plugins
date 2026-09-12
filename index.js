@@ -471,11 +471,37 @@ async function handleState(ctx, request) {
 /** @param {any} ctx @param {any} request */
 async function handleEdit(ctx, request) {
   const body = await request.json().catch(() => null)
+  const sessionId = typeof body?.sessionId === 'string' ? body.sessionId : ''
+  const messageId = typeof body?.messageId === 'string' ? body.messageId : ''
+  const text = typeof body?.text === 'string' ? body.text : ''
+  const keepImages = Array.isArray(body?.keepImages) ? body.keepImages : null
+  const diagBase = {
+    sessionId: sessionId.slice(0, 48),
+    messageId: messageId.slice(0, 48),
+    textLength: text.length,
+    text: text.slice(0, 80),
+    keepImages: keepImages === null ? null : keepImages.length,
+    bodyKeys: body !== null && typeof body === 'object' ? Object.keys(body).join(',') : null
+  }
+  // Before anything can refuse it. A request that leaves no trace is
+  // indistinguishable from a click that never reached this plugin at all.
+  await diag(ctx, { ...diagBase, phase: 'request' })
+  try {
+    return await performEdit(ctx, { body, sessionId, messageId, text, keepImages, diagBase })
+  } catch (error) {
+    await diag(ctx, {
+      ...diagBase,
+      phase: 'failed',
+      code: typeof error?.code === 'string' ? error.code : 'internal',
+      reason: (error instanceof Error ? error.message : String(error)).slice(0, 240)
+    })
+    throw error
+  }
+}
+
+/** The edit itself, with the attempt already recorded by the caller. */
+async function performEdit(ctx, { body, sessionId, messageId, text, keepImages, diagBase }) {
   if (body === null || typeof body !== 'object') throw coded('bad-request', 'a JSON body is required')
-  const sessionId = typeof body.sessionId === 'string' ? body.sessionId : ''
-  const messageId = typeof body.messageId === 'string' ? body.messageId : ''
-  const text = typeof body.text === 'string' ? body.text : ''
-  const keepImages = Array.isArray(body.keepImages) ? body.keepImages : null
   if (messageId === '') throw coded('bad-request', 'messageId is required')
   const agent = resolveAgent(ctx, sessionId)
   const session = agent.session
@@ -490,18 +516,11 @@ async function handleEdit(ctx, request) {
   if (text === messageText(originalContent)
     && (keepImages === null || keepImages.length === originalImages.length)
     && pendingEdits.has(sessionId) === false) {
+    await diag(ctx, { ...diagBase, phase: 'unchanged', status: agent.status })
     return ok({ changed: false, reason: 'identical' })
   }
   if (pendingEdits.has(sessionId)) throw coded('busy', 'Đang có một lần sửa khác chạy trên phiên này.')
-  const diagBase = {
-    sessionId: sessionId.slice(0, 48),
-    messageId: messageId.slice(0, 48),
-    textLength: text.length,
-    text: text.slice(0, 80),
-    keepImages: keepImages === null ? null : keepImages.length,
-    status: agent.status
-  }
-  await diag(ctx, { ...diagBase, phase: 'request' })
+  const base = { ...diagBase, status: agent.status }
 
   // Editing while a response streams (or while prompts are queued) is legal:
   // interrupt the running turn with the harness's own user-cancel semantics,
@@ -533,7 +552,7 @@ async function handleEdit(ctx, request) {
 
   const started = startRegeneration(agent)
   if (started !== true) {
-    await diag(ctx, { ...diagBase, phase: 'refused', code: 'busy', reason: 'agent could not start a turn' })
+    await diag(ctx, { ...base, phase: 'refused', code: 'busy', reason: 'agent could not start a turn' })
     const pending = pendingEdits.get(sessionId)
     if (pending !== undefined) {
       if (pending.timer !== undefined) clearTimeout(pending.timer)
@@ -543,7 +562,7 @@ async function handleEdit(ctx, request) {
   }
   const committed = await promise
   await ctx.get('sessions')?.flush?.(session)
-  await diag(ctx, { ...diagBase, phase: 'committed', seq: committed.seq, shadowed: committed.shadowedCount })
+  await diag(ctx, { ...base, phase: 'committed', seq: committed.seq, shadowed: committed.shadowedCount })
   return ok({ changed: true, ...committed, requestedAt: requested })
 }
 
@@ -557,10 +576,16 @@ function handleHealth(ctx) {
   })
 }
 
-/** @param {any} request */
-async function handleDiag(request) {
+/**
+ * The client's own trace, written to the same file as the host's. The two sides
+ * of a failed edit are one story, and it has to be readable in one place.
+ * @param {any} ctx @param {any} request
+ */
+async function handleDiag(ctx, request) {
   const body = await request.json().catch(() => null)
-  if (body !== null && typeof body === 'object') console.log(`[dsh-message-edit] diag ${JSON.stringify(body)}`)
+  if (body === null || typeof body !== 'object') return ok({ logged: false })
+  const record = { ...body, from: 'client' }
+  await diag(ctx, record)
   return ok({ logged: true })
 }
 
@@ -595,10 +620,13 @@ export function apply(ctx) {
     [ROUTE_STATE, ['GET'], guard((request) => handleState(ctx, request))],
     [ROUTE_EDIT, ['POST'], guard((request) => handleEdit(ctx, request))],
     [ROUTE_HEALTH, ['GET'], guard(() => Promise.resolve(handleHealth(ctx)))],
-    [ROUTE_DIAG, ['POST'], guard((request) => handleDiag(request))]
+    [ROUTE_DIAG, ['POST'], guard((request) => handleDiag(ctx, request))]
   ]
   for (const [path, methods, fetchHandler] of routes) {
     connection.fetch.register({ path, methods, fetch: fetchHandler })
   }
+  // The file exists from the moment the plugin is alive, so a path quoted to the
+  // reader is a path that opens — including before the first edit is ever tried.
+  void diag(ctx, { phase: 'loaded', build: BUILD })
   ctx.logger?.info?.(`[dsh-message-edit] ${BUILD} ready on /api/dsh-message-edit.*`)
 }
