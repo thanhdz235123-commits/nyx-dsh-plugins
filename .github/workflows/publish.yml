@@ -1,0 +1,64 @@
+name: publish
+
+# Publishes whichever workspace package carries a version the registry does not
+# have yet. Idempotent: a re-run skips anything already published, so the two
+# packages can version independently and a failed job can simply be re-run.
+#
+#   tag push            git tag v0.6.4 && git push origin v0.6.4
+#   or manual           Actions → publish → Run workflow
+#
+# Needs one repository secret: NPM_TOKEN — an npm *Automation* (or granular,
+# 2FA-bypass) token, because publishing with 2FA enabled otherwise demands an
+# OTP on every upload.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: https://registry.npmjs.org
+
+      - name: Check the halves parse
+        run: npm run check
+
+      - name: Reject a missing token before doing anything else
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "${NODE_AUTH_TOKEN}" ]; then
+            echo "::error::secret NPM_TOKEN is not set — add an npm Automation token in Settings → Secrets and variables → Actions"
+            exit 1
+          fi
+
+      - name: Publish every package whose version is not on the registry yet
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          published=0
+          for manifest in packages/*/package.json; do
+            name=$(node -p "require('./$manifest').name")
+            version=$(node -p "require('./$manifest').version")
+            if npm view "$name@$version" version >/dev/null 2>&1; then
+              echo "skip    $name@$version — already on the registry"
+              continue
+            fi
+            echo "publish $name@$version"
+            npm publish --workspace "$name" --access public
+            published=$((published + 1))
+          done
+          echo "packages published: $published"

@@ -27,16 +27,16 @@ npm run install:plugins          # both plugins; or run one package's bin yourse
 # node packages/nyx-message-edit/bin/nyx-message-edit.mjs install
 ```
 
-**From npm**, once the packages are published there:
+**From npm** — no clone, no build:
 
 ```bash
 npx nyx-file-panel install
 npx nyx-message-edit install
 ```
 
-`npx` fetches from the npm registry, so it only works after a publish — it does
-not read GitHub. Installing from the registry needs no account either: only
-*publishing* does.
+`npx` reads the npm registry only (it never looks at GitHub), so this path needs
+the packages to be published — which the `publish` workflow keeps true. Installing
+needs no account: only *publishing* does.
 
 Flags both installers understand: `--force` to overwrite an existing install,
 `--home <path>` when the harness home is not the default, `--dep` to install as
@@ -53,6 +53,23 @@ packages/nyx-message-edit/   lib/index.js  lib/client.js  lib/types/**  bin/  to
 ```
 
 Both packages are independent: install one, the other, or both.
+
+## Publishing (maintainers)
+
+`.github/workflows/publish.yml` publishes **whichever package carries a version
+the registry does not have yet**, then skips it on every later run — so the two
+packages version independently, and a failed job is safe to re-run.
+
+```bash
+git tag v0.6.4 && git push origin v0.6.4     # tag push
+gh workflow run publish                       # or manual: Actions → publish → Run workflow
+```
+
+It needs one repository secret, `NPM_TOKEN`: an npm **Automation** token (or a
+granular token with *bypass 2FA* enabled). npm refuses `npm publish` with an OTP
+challenge when the account has two-factor auth on, and an automation token is
+the supported way around it — see npm's
+[tokens docs](https://docs.npmjs.com/about-access-tokens).
 
 ## License
 
