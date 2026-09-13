@@ -45,6 +45,25 @@ a profile dependency instead of a copy. `uninstall` takes it back out.
 **Host halves load at boot**: after installing, restart DSH Desktop. Client
 halves are picked up with a window reload (⌘R / Ctrl-R).
 
+## Privacy
+
+Both plugins are local software: no network calls of their own, no telemetry,
+and nothing about you written to disk unless you ask for it.
+
+Two things do touch disk, deliberately:
+
+- `nyx-file-panel` caches a per-session diff index under
+  `<DSH_HOME>/nyx-file-panel-index/`, which is what makes reopening a file
+  instant. Delete that folder to clear it.
+- Diagnostics are **opt-in**: with `NYX_FILE_PANEL_DIAG=1` or
+  `NYX_MESSAGE_EDIT_DIAG=1` set, the plugin appends a local JSONL trail to the
+  harness home. Message text is never written — only lengths and ids.
+
+`tools/leak-scan.mjs` scans every tracked file for credentials, home paths,
+personal addresses and machine names. It runs in `npm run check` and in the
+publish workflow, so nothing of that shape can reach the registry through this
+repository.
+
 ## Layout
 
 ```

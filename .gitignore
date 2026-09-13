@@ -1,3 +1,19 @@
 node_modules/
 .DS_Store
 *.log
+
+# Local plugin output: diagnostics and caches belong to the machine that
+# produced them, never to the repository.
+*.jsonl
+*.tgz
+*.har
+*-diag.jsonl
+
+# Harness home leftovers, if a rig is ever run from inside the repository
+profiles/node_modules/
+sessions/
+storages/
+settings.yaml
+.credentials.yaml
+cookies.txt
+token

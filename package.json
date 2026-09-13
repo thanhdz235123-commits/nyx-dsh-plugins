@@ -22,9 +22,10 @@
     "node": ">=20"
   },
   "scripts": {
-    "check": "node --check packages/nyx-file-panel/lib/index.js && node --check packages/nyx-file-panel/lib/client.js && node --check packages/nyx-message-edit/lib/index.js && node --check packages/nyx-message-edit/lib/client.js",
+    "check": "node --check packages/nyx-file-panel/lib/index.js && node --check packages/nyx-file-panel/lib/client.js && node --check packages/nyx-message-edit/lib/index.js && node --check packages/nyx-message-edit/lib/client.js && node tools/leak-scan.mjs",
     "install:plugins": "node packages/nyx-file-panel/bin/nyx-file-panel.mjs install && node packages/nyx-message-edit/bin/nyx-message-edit.mjs install",
     "uninstall:plugins": "node packages/nyx-file-panel/bin/nyx-file-panel.mjs uninstall && node packages/nyx-message-edit/bin/nyx-message-edit.mjs uninstall",
-    "pack": "npm pack --dry-run --workspaces"
+    "pack": "npm pack --dry-run --workspaces",
+    "leak-scan": "node tools/leak-scan.mjs"
   }
 }

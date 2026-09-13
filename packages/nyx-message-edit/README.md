@@ -119,6 +119,13 @@ Run on a real harness instance (same app build as the desktop app) with a record
 
 ---
 
+## Privacy
+
+Local software: no network calls beyond its own harness host, no telemetry, and
+no trace of your conversation on disk unless you ask for one. Diagnostics require
+`NYX_MESSAGE_EDIT_DIAG=1` and record lengths and ids — never the text of a
+message.
+
 ## Layout
 
 ```

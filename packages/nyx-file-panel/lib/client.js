@@ -65,7 +65,7 @@ window.__ModuleLoader__.load({
 
     /** The build this client is. Shown in the footer so it is never a guess
      *  which version a window is running. */
-    const CLIENT_BUILD = '0.6.4';
+    const CLIENT_BUILD = '0.6.5';
 
     let tabSeq = 0;
 

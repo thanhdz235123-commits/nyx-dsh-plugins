@@ -19,7 +19,7 @@ window.__ModuleLoader__.load({
     const module = { exports: {} }
     const exports = module.exports
 
-    const CLIENT_BUILD = '0.1.2'
+    const CLIENT_BUILD = '0.1.3'
     const STYLE_ID = 'nyx-message-edit-style'
     const HIDDEN_STYLE_ID = 'nyx-message-edit-hidden'
     const EDITOR_ID = 'nyx-message-edit-editor'
@@ -838,19 +838,19 @@ tr[${REPLACED_ATTR}="true"][data-turn-start="true"] > td:last-child::after {
       let top = null
       let left = null
       if (actions !== null && actions.getBoundingClientRect().width > 0) {
-        // Sit in the row itself, on the action buttons' own baseline: one slot
-        // after the last one, which is where an edit action belongs and the only
-        // free space in the row (what sits before Copy is the message's time).
+        // Sit on the action cluster's own baseline. That cluster — the
+        // message's time and its copy button — is flush with the row's right
+        // edge, so "one slot after the last button" lands *outside* the
+        // message. That slot is taken only when the row truly has room for it;
+        // otherwise the pencil tucks into the free space in front of the
+        // cluster, immediately left of the time and still on the same line.
         const buttons = [...actions.querySelectorAll('button')]
         const last = buttons[buttons.length - 1] ?? actions
         const rect = last.getBoundingClientRect()
         top = rect.top + (rect.height - size) / 2
         left = rect.right + gap
-        if (left + size > window.innerWidth - gap) {
-          // No room after the row (a window edge): fall back to its first slot.
-          const first = (buttons[0] ?? actions).getBoundingClientRect()
-          top = first.top + (first.height - size) / 2
-          left = first.left - size - gap
+        if (left + size > rowRect.right - 2) {
+          left = actions.getBoundingClientRect().left - size - gap
         }
       }
       if (left === null || left < gap) {

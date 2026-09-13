@@ -20,7 +20,7 @@ import zlib from 'node:zlib'
 
 export const name = 'nyx-file-panel'
 /** Bumped per host revision; the health route reports it so a reload is provable. */
-export const BUILD = '0.6.4'
+export const BUILD = '0.6.5'
 export const inject = ['connection']
 
 const ROUTE_FILE = '/api/nyx-file-panel.file'
@@ -1153,10 +1153,16 @@ async function handleDiff(request, ctx) {
 /**
  * Append one line to the panel's diag file, whoever is reporting: the client's
  * window geometry, or the host's own background work.
+ *
+ * Off unless `NYX_FILE_PANEL_DIAG=1`. Reports name the file the reader clicked,
+ * and a plugin that keeps a trace of somebody's files on their disk by default
+ * is a plugin that should not have been installed.
+ *
  * @param {object} record
  * @returns {Promise<string | null>} the file written, or null when there is none.
  */
 async function appendPanelDiag(record) {
+  if (process.env.NYX_FILE_PANEL_DIAG !== '1') return null
   const home = process.env.DSH_HOME
   if (typeof home !== 'string' || home.length === 0) return null
   const file = path.join(home, 'nyx-file-panel-diag.jsonl')

@@ -1,6 +1,6 @@
 {
   "name": "nyx-message-edit",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "True edit-message for DeepSeek Harness: replace a user message in place, truncate everything after it, and regenerate from that exact point.",
   "type": "module",
   "main": "lib/index.js",

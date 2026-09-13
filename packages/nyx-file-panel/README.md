@@ -203,6 +203,13 @@ artifacts, and code search from the same column — see the
 [Antigravity artifacts docs](https://antigravity.google/docs/artifacts) and the
 [diff-view guide](https://antigravitylab.net/en/articles/editor/antigravity-diff-view-advanced-guide).
 
+## Privacy
+
+Local software: no network calls beyond its own harness host, no telemetry, and
+nothing written about you unless you ask. The per-session diff index lives under
+`<DSH_HOME>/nyx-file-panel-index/` (delete it to clear the cache), and
+diagnostics only exist when `NYX_FILE_PANEL_DIAG=1` is set.
+
 ## Changelog
 
 - **0.6.2** — editing happens in place. `POST /api/nyx-file-panel.edit` rewrites the conversation instead of branching it: the edited text is appended as a `user/message` carrying `surfaceOp: {op:'replace', start, end}` over the range from the edited message to the end of the surface, with every shadowed node cited in `sourceEventSeqs` — the exact contract DSH's compaction uses. DSH's own prompt path then sends the text (a turn can only start from an appended message, so the copy it appends is collapsed onto the replacement again by `edit-settle`). Measured on the rig: editing the second message of the fixture replaced seqs 11–12 with one new message, session count unchanged, and the original session untouched on disk.

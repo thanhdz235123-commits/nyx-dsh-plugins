@@ -33,7 +33,7 @@ jobs:
           node-version: '22'
           registry-url: https://registry.npmjs.org
 
-      - name: Check the halves parse
+      - name: Check the halves parse, and that nothing leaks
         run: npm run check
 
       - name: Reject a missing token before doing anything else

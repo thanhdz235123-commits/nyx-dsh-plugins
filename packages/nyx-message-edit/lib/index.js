@@ -29,7 +29,7 @@ import path from 'node:path'
 
 export const name = 'nyx-message-edit'
 /** Bumped per host revision; the health route reports it. */
-export const BUILD = '0.1.2'
+export const BUILD = '0.1.3'
 export const inject = ['connection', 'agents']
 
 const ROUTE_STATE = '/api/nyx-message-edit.state'
@@ -51,11 +51,14 @@ const pendingEdits = new Map()
 /**
  * Append one line to `<DSH_HOME>/nyx-message-edit-diag.jsonl`.
  *
- * A failed edit is otherwise invisible from the outside: the reader sees a
- * button do nothing and there is no trace to read. Every attempt and every
- * refusal lands here with its reason, so the next report is a fact.
+ * Off unless `NYX_MESSAGE_EDIT_DIAG=1`: a plugin has no business writing a
+ * trace of somebody's conversation to their disk by default. Turned on, a
+ * failed edit stops being invisible from the outside — every attempt and every
+ * refusal lands here with its reason, so the next report is a fact. What lands
+ * is deliberately content-free: lengths and ids, never the words.
  */
 async function diag(ctx, record) {
+  if (process.env.NYX_MESSAGE_EDIT_DIAG !== '1') return
   try {
     const home = ctx.get('homePaths')?.dshHome ?? process.env.DSH_HOME ?? path.join(homedir(), '.dsh')
     const file = path.join(home, 'nyx-message-edit-diag.jsonl')
@@ -530,7 +533,6 @@ async function handleEdit(ctx, request) {
     sessionId: sessionId.slice(0, 48),
     messageId: messageId.slice(0, 48),
     textLength: text.length,
-    text: text.slice(0, 80),
     keepImages: keepImages === null ? null : keepImages.length,
     bodyKeys: body !== null && typeof body === 'object' ? Object.keys(body).join(',') : null
   }
