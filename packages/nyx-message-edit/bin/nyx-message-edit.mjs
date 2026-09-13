@@ -133,54 +133,13 @@ function patchPayload(text) {
 }
 
 /**
- * Row lines for one plugin, at the indentation of the block's existing rows.
- * @param id - plugin id, used for both `id` and `name`.
- * @param indent - leading whitespace of a sibling `- id:` line.
- * @returns the two YAML lines.
- */
-function insertRowLines(id, indent) {
-  return [`${indent}- id: ${id}`, `${indent}  name: ${id}`]
-}
-
-/**
- * Extend an existing top-level `- insert:` row with one more entry.
- *
- * The patch layer must stay a SINGLE YAML document — `js-yaml.load()`, which
- * the harness boots through, throws on a multi-document stream, so appending a
- * second `- insert:` block would stop the app from starting. An existing row is
- * therefore extended in place.
- *
- * @param text - current patch file.
- * @param id - plugin id to add.
- * @returns the merged text, or null when there is no insert block to extend.
- */
-function mergeIntoInsertBlock(text, id) {
-  const lines = text.split('\n')
-  const start = lines.findIndex((line) => /^- insert:\s*$/.test(line))
-  if (start === -1) return null
-  let end = lines.length
-  for (let index = start + 1; index < lines.length; index += 1) {
-    if (lines[index].trim() === '') continue
-    if (lines[index].search(/\S/) === 0) {
-      end = index
-      break
-    }
-  }
-  let indent = null
-  let lastChild = start
-  for (let index = start + 1; index < end; index += 1) {
-    const match = /^(\s*)-\s+id:\s*\S+/.exec(lines[index])
-    if (match !== null && indent === null) indent = match[1]
-    if (lines[index].trim() !== '') lastChild = index
-  }
-  if (indent === null) return null
-  const inserted = insertRowLines(id, indent)
-  return [...lines.slice(0, lastChild + 1), ...inserted, ...lines.slice(lastChild + 1)].join('\n')
-}
-
-/**
  * Drop this plugin's `- id:`/`name:` pair from a shared insert block, leaving
  * every other row (and the surrounding comments) exactly as they were.
+ *
+ * Kept for installs written by 0.1.0/0.1.1, which merged their row into
+ * whichever `- insert:` block came first. Uninstalling such an install has to
+ * take back exactly its own pair and nothing else.
+ *
  * @param text - current patch file.
  * @param id - plugin id to drop.
  * @returns the pruned text, or null when the pair is not present.
@@ -208,6 +167,16 @@ function dropRowFromInsertBlock(text, id) {
   return kept.join('\n')
 }
 
+/**
+ * Add this plugin's row to the profile's patch layer.
+ *
+ * One plugin, one block: the row goes in its own `- insert:` item, wrapped in
+ * this installer's markers, whatever else the layer already holds. A second
+ * *item* in the same YAML sequence is still a single document — the harness
+ * boots DSH Desktop with several of them today — but a row merged into another
+ * plugin's block belongs to that block, so uninstalling that plugin would take
+ * this one's activation away with it.
+ */
 function ensurePatchEntry(patchFile) {
   const before = existsSync(patchFile) ? readFileSync(patchFile, 'utf8') : ''
   const state = patchState(before)
@@ -219,11 +188,6 @@ function ensurePatchEntry(patchFile) {
   if (payload === '' || payload === '[]') {
     writeFileSync(patchFile, insertBlock())
     return { changed: true, state: state === 'manual' ? 'manual+marked' : 'added' }
-  }
-  const merged = mergeIntoInsertBlock(before, PACKAGE)
-  if (merged !== null) {
-    writeFileSync(patchFile, merged)
-    return { changed: true, state: 'merged' }
   }
   const next = `${before.replace(/\s*$/, '\n')}\n${insertBlock()}`
   writeFileSync(patchFile, next)

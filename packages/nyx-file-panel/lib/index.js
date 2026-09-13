@@ -20,7 +20,7 @@ import zlib from 'node:zlib'
 
 export const name = 'nyx-file-panel'
 /** Bumped per host revision; the health route reports it so a reload is provable. */
-export const BUILD = '0.6.3'
+export const BUILD = '0.6.4'
 export const inject = ['connection']
 
 const ROUTE_FILE = '/api/nyx-file-panel.file'

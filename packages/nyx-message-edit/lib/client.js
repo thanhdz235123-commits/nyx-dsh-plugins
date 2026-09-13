@@ -19,7 +19,7 @@ window.__ModuleLoader__.load({
     const module = { exports: {} }
     const exports = module.exports
 
-    const CLIENT_BUILD = '0.1.1'
+    const CLIENT_BUILD = '0.1.2'
     const STYLE_ID = 'nyx-message-edit-style'
     const HIDDEN_STYLE_ID = 'nyx-message-edit-hidden'
     const EDITOR_ID = 'nyx-message-edit-editor'

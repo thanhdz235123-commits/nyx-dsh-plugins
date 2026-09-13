@@ -29,7 +29,7 @@ import path from 'node:path'
 
 export const name = 'nyx-message-edit'
 /** Bumped per host revision; the health route reports it. */
-export const BUILD = '0.1.1'
+export const BUILD = '0.1.2'
 export const inject = ['connection', 'agents']
 
 const ROUTE_STATE = '/api/nyx-message-edit.state'

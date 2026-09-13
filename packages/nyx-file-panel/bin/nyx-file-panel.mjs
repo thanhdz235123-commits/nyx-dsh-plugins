@@ -142,6 +142,28 @@ function ensurePatchEntry(patchFile) {
   return { changed: true, state: state === 'manual' ? 'manual+marked' : 'added' }
 }
 
+/**
+ * Re-emit rows that are not this plugin's, in an insert block of their own.
+ *
+ * An install can end up with another plugin's row inside our markers, and an
+ * uninstall must not take that plugin's activation away with it: the row is
+ * that plugin's, not ours, so it is moved out instead of deleted.
+ *
+ * @param ids - plugin ids to keep.
+ * @returns a marker-free block that keeps the rows valid YAML.
+ */
+function keptRowsBlock(ids) {
+  const rows = ids.map((id) => `    - id: ${id}\n      name: ${id}`).join('\n')
+  return [
+    '# The rows below were found inside nyx-file-panel\'s own patch block.',
+    '# They belong to other plugins, so removing nyx-file-panel keeps them.',
+    '- insert:',
+    rows,
+    '',
+    ''
+  ].join('\n')
+}
+
 function removePatchEntry(patchFile) {
   if (existsSync(patchFile) !== true) return { changed: false, state: 'absent' }
   const before = readFileSync(patchFile, 'utf8')
@@ -152,7 +174,13 @@ function removePatchEntry(patchFile) {
     const start = before.indexOf(MARK_START)
     const endIndex = before.indexOf(MARK_END, start)
     const end = endIndex === -1 ? before.length : endIndex + MARK_END.length
-    next = `${before.slice(0, start)}${before.slice(end)}`
+    const block = before.slice(start, Math.max(end, start))
+    const foreign = [...block.matchAll(/-\s*id:\s*([^\s#]+)/g)]
+      .map((match) => match[1])
+      .filter((id) => id !== PACKAGE)
+    const kept = foreign.length === 0 ? '' : keptRowsBlock([...new Set(foreign)])
+    next = `${before.slice(0, start)}${kept}${before.slice(end)}`
+    if (foreign.length > 0) state = `removed (kept ${[...new Set(foreign)].join(', ')})`
   } else if (patchState(before) === 'manual') {
     // A row someone wrote by hand. Removed only when the block is exactly this
     // plugin's insert — a block that also configures something else is left
