@@ -29,7 +29,7 @@ import path from 'node:path'
 
 export const name = 'nyx-message-edit'
 /** Bumped per host revision; the health route reports it. */
-export const BUILD = '0.1.0'
+export const BUILD = '0.1.1'
 export const inject = ['connection', 'agents']
 
 const ROUTE_STATE = '/api/nyx-message-edit.state'
@@ -169,12 +169,34 @@ function chatKey(kind, id) {
   return `${kind.length}:${kind}${id}`
 }
 
+/**
+ * The kind the Chat flow gives a message this plugin re-appended.
+ *
+ * The harness's own user-message node only claims an *append* surface op, so a
+ * message written with `surfaceOp: replace` is claimed by the definition this
+ * plugin registers client-side (`NODE_KIND`) instead — and its row is keyed
+ * with that kind. A message an edit produced therefore answers to
+ * `nyx-message-edit`, never to `input-message`.
+ */
+const EDIT_NODE_KIND = 'nyx-message-edit'
+
+/** The message id of an event that renders as a chat row, or null. */
+function userIdOfEvent(event) {
+  if (event.type !== 'user/message') return null
+  const id = event.data?.id
+  return typeof id === 'string' && id !== '' ? id : null
+}
+
 function chatKeysOf(session, event) {
   const keys = []
   if (event.type === 'user/message') {
     const id = event.data?.id ?? ''
+    // One message, three possible spellings: a typed input, a queued steer, or
+    // a message an edit re-appended — which is exactly what a second edit has
+    // to hide, and the only one the harness's own node does not claim.
     keys.push(chatKey('input-message', id))
     keys.push(chatKey('steering', id))
+    keys.push(chatKey(EDIT_NODE_KIND, id))
   } else if (event.type === 'assistant/message') {
     const turn = event.data?.turn
     const step = event.data?.step
@@ -236,11 +258,14 @@ function commitEdit(session, edit) {
     sourceEventSeqs: shadowed
   })
   const hiddenKeys = []
+  const hiddenIds = []
   const hiddenTurns = new Set()
   for (const seq of shadowed) {
     const shadowedEvent = session.eventAt(seq)
     if (shadowedEvent === undefined) continue
     for (const key of chatKeysOf(session, shadowedEvent)) if (!hiddenKeys.includes(key)) hiddenKeys.push(key)
+    const id = userIdOfEvent(shadowedEvent)
+    if (id !== null && !hiddenIds.includes(id)) hiddenIds.push(id)
     const turn = turnOfEvent(session, shadowedEvent)
     if (Number.isSafeInteger(turn)) hiddenTurns.add(turn)
   }
@@ -253,6 +278,7 @@ function commitEdit(session, edit) {
     shadowedSeqs: shadowed,
     shadowedCount: shadowed.length,
     hiddenKeys,
+    hiddenIds,
     hiddenTurns: [...hiddenTurns].sort((left, right) => left - right)
   }
 }
@@ -413,6 +439,7 @@ function resolveAgent(ctx, sessionId) {
  */
 function hiddenFromLog(session) {
   const keys = []
+  const ids = []
   const turns = new Set()
   for (const event of session.ownEvents()) {
     if (event.type !== 'user/message') continue
@@ -423,11 +450,13 @@ function hiddenFromLog(session) {
       const shadowed = session.eventAt(seq)
       if (shadowed === undefined) continue
       for (const key of chatKeysOf(session, shadowed)) if (!keys.includes(key)) keys.push(key)
+      const id = userIdOfEvent(shadowed)
+      if (id !== null && !ids.includes(id)) ids.push(id)
       const turn = turnOfEvent(session, shadowed)
       if (Number.isSafeInteger(turn)) turns.add(turn)
     }
   }
-  return { keys, turns: [...turns].sort((left, right) => left - right) }
+  return { keys, ids, turns: [...turns].sort((left, right) => left - right) }
 }
 
 /**
@@ -483,6 +512,7 @@ async function handleState(ctx, request) {
     model: currentModelOf(session),
     messages,
     hiddenKeys: hidden.keys,
+    hiddenIds: hidden.ids,
     hiddenTurns: hidden.turns,
     edits: history.map((record) => ({ seq: record.seq, from: record.from, editedId: record.editedId, start: record.start, end: record.end, shadowedCount: record.shadowedCount })),
     surfaceNodes: nodes.length

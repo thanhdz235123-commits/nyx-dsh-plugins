@@ -19,7 +19,7 @@ window.__ModuleLoader__.load({
     const module = { exports: {} }
     const exports = module.exports
 
-    const CLIENT_BUILD = '0.1.0'
+    const CLIENT_BUILD = '0.1.1'
     const STYLE_ID = 'nyx-message-edit-style'
     const HIDDEN_STYLE_ID = 'nyx-message-edit-hidden'
     const EDITOR_ID = 'nyx-message-edit-editor'
@@ -673,15 +673,47 @@ tr[${REPLACED_ATTR}="true"][data-turn-start="true"] > td:last-child::after {
       }, 200)
     }
 
+    /** A value safe to drop inside a double-quoted CSS attribute selector. */
+    function cssAttr(value) {
+      return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+    }
+
+    /**
+     * The message ids a state says are no longer in the surface.
+     *
+     * Keys name a row by *kind plus id*, and the kind depends on how the
+     * message reached the transcript: a typed input renders as `input-message`,
+     * a message an edit re-appended renders under this plugin's own definition
+     * — same id, different kind, different key. Ids are the kind-independent
+     * handle, so both sources feed the same set.
+     */
+    function hiddenMessageIds(state) {
+      const ids = new Set()
+      for (const id of state?.hiddenIds ?? []) {
+        if (typeof id === 'string' && id !== '') ids.add(id)
+      }
+      for (const key of state?.hiddenKeys ?? []) {
+        const id = messageIdOfKey(String(key))
+        if (id !== null) ids.add(id)
+      }
+      return ids
+    }
+
     /**
      * Hide exactly the rows the harness's surface fold no longer contains.
      * Rows are addressable by their own `data-chat-flow-key`, and whole turns
      * by `data-chat-turn`; both come straight from the durable log.
+     *
+     * A row is also addressed by the message id it ends with: `input-message`,
+     * `steering` and `nyx-message-edit` rows all end in the same id, so one
+     * rule hides every generation of a replaced message no matter which kind
+     * the flow gave it — which is precisely what a second edit needs.
      */
     function paintHidden(state) {
       const selectors = []
-      for (const turn of state?.hiddenTurns ?? []) selectors.push(`[data-chat-flow] > [data-chat-turn="${String(turn)}"]`)
-      for (const key of state?.hiddenKeys ?? []) selectors.push(`[data-chat-flow] > [data-chat-flow-key="${String(key).replace(/"/g, '\\"')}"]`)
+      for (const turn of state?.hiddenTurns ?? []) selectors.push(`[data-chat-flow] > [data-chat-turn="${cssAttr(turn)}"]`)
+      for (const key of state?.hiddenKeys ?? []) selectors.push(`[data-chat-flow] > [data-chat-flow-key="${cssAttr(key)}"]`)
+      for (const id of hiddenMessageIds(state)) selectors.push(`[data-chat-flow] > [data-chat-flow-key$="${cssAttr(id)}"]`)
       const element = hiddenStyleElement()
       const next = `${selectors.length === 0 ? '' : `${selectors.join(',')}{display:none !important}`}${REPLACED_CSS}`
       if (element.textContent !== next) element.textContent = next
@@ -1547,6 +1579,8 @@ tr[${REPLACED_ATTR}="true"][data-turn-start="true"] > td:last-child::after {
           return true
         },
         hiddenKeys: () => (stateSnapshot()?.hiddenKeys ?? []),
+        hiddenIds: () => [...hiddenMessageIds(stateSnapshot())],
+        hiddenSheet: () => (document.getElementById(HIDDEN_STYLE_ID)?.textContent ?? ''),
         editableMessages: () => editableMessages(),
         /** Trajectory rows currently marked as belonging to a replaced turn. */
         replacedRows: () => document.querySelectorAll(`tr[${REPLACED_ATTR}="true"]`).length,
