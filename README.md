@@ -13,24 +13,34 @@ contract in `package.json` (`main`, `exports["./client"]`, `dsh.client`,
 
 ## Install
 
-Each package installs itself into a DSH profile — it copies its halves into the
-profile's `node_modules` and writes the profile patch that activates them:
+Each package installs itself into a DSH profile: it copies its halves into the
+profile's `node_modules` and writes the profile patch that activates them.
+
+**From a clone** — this is the one path that needs nothing published anywhere,
+and the one that is verified end to end:
+
+```bash
+git clone https://github.com/thanhdz235123-commits/nyx-dsh-plugins
+cd nyx-dsh-plugins
+npm run install:plugins          # both plugins; or run one package's bin yourself:
+# node packages/nyx-file-panel/bin/nyx-file-panel.mjs install
+# node packages/nyx-message-edit/bin/nyx-message-edit.mjs install
+```
+
+**From npm**, once the packages are published there:
 
 ```bash
 npx nyx-file-panel install
 npx nyx-message-edit install
 ```
 
-Add `--force` to overwrite an existing install, `--home <path>` when the harness
-home is not the default, `--dep` to install as a profile dependency instead of a
-copy. `npx nyx-file-panel uninstall` takes it back out.
+`npx` fetches from the npm registry, so it only works after a publish — it does
+not read GitHub. Installing from the registry needs no account either: only
+*publishing* does.
 
-From a clone (no npm publish needed):
-
-```bash
-git clone https://github.com/thanhdz235123-commits/nyx-dsh-plugins
-cd nyx-dsh-plugins/packages/nyx-file-panel && node bin/nyx-file-panel.mjs install
-```
+Flags both installers understand: `--force` to overwrite an existing install,
+`--home <path>` when the harness home is not the default, `--dep` to install as
+a profile dependency instead of a copy. `uninstall` takes it back out.
 
 **Host halves load at boot**: after installing, restart DSH Desktop. Client
 halves are picked up with a window reload (⌘R / Ctrl-R).
